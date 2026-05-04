@@ -4,7 +4,7 @@ import bevy.app.App;
 import bevy.ecs.World;
 
 class AssetApp {
-    public static function initAsset<T>(app:App, assetClass:Class<T>):App {
+    public static function initAsset<T:Asset>(app:App, assetClass:Class<T>):App {
         var key = AssetType.resourceKey(assetClass);
         if (!app.world.hasResourceByKey(key)) {
             app.world.insertResource(new Assets<T>(assetClass));
@@ -18,11 +18,11 @@ class AssetApp {
         return app;
     }
 
-    public static function assets<T>(app:App, assetClass:Class<T>):Assets<T> {
+    public static function assets<T:Asset>(app:App, assetClass:Class<T>):Assets<T> {
         return requireAssets(app.world, assetClass);
     }
 
-    public static function requireAssets<T>(world:World, assetClass:Class<T>):Assets<T> {
+    public static function requireAssets<T:Asset>(world:World, assetClass:Class<T>):Assets<T> {
         var key = AssetType.resourceKey(assetClass);
         var assets:Assets<T> = world.getResourceByKey(key);
         if (assets == null) {

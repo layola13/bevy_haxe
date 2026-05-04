@@ -2,22 +2,27 @@ package bevy.asset;
 
 import bevy.async.Future;
 import bevy.ecs.Resource;
+import bevy.ecs.World;
+
+enum AssetLoadError {
+    MissingLoader(path:String, assetKey:String);
+    LoadFailed(path:String, message:String);
+}
 
 enum LoadState {
     NotLoaded;
     Loading;
     Loaded;
-    Failed(error:Dynamic);
+    Failed(error:AssetLoadError);
 }
 
 @:using(bevy.asset.AssetLoad)
 class AssetServer implements Resource {
-    public var __world:Dynamic;
+    public var __world(default, null):Null<World>;
 
     private var textSource:String->Future<String>;
     private var states:Map<String, LoadState>;
     private var pathToHandle:Map<String, Int>;
-    private var pathToType:Map<String, String>;
     private var loadersByType:Map<String, AssetLoaderRegistration>;
     private var loadersByExtension:Map<String, AssetLoaderRegistration>;
 
@@ -26,12 +31,11 @@ class AssetServer implements Resource {
         this.textSource = textSource != null ? textSource : defaultTextSource;
         states = new Map();
         pathToHandle = new Map();
-        pathToType = new Map();
         loadersByType = new Map();
         loadersByExtension = new Map();
     }
 
-    public function attachWorld(world:Dynamic):AssetServer {
+    public function attachWorld(world:World):AssetServer {
         __world = world;
         return this;
     }
@@ -43,7 +47,7 @@ class AssetServer implements Resource {
         }
     }
 
-    public function loadTyped<T>(assets:Assets<T>, path:String):Handle<T> {
+    public function loadTyped<T:Asset>(assets:Assets<T>, path:String):Handle<T> {
         var assetKey = assets.typeKey();
         var dedupKey = pathKey(assetKey, path);
 
@@ -56,25 +60,24 @@ class AssetServer implements Resource {
             loader = loadersByExtension.get(pathExtension(path));
         }
         if (loader == null) {
-            throw 'No asset loader registered for $assetKey at path $path';
+            throw MissingLoader(path, assetKey);
         }
 
         var handle = assets.reserveHandle();
         pathToHandle.set(dedupKey, handle.id);
-        pathToType.set(path, assetKey);
         states.set(stateKey(assetKey, handle.id), Loading);
 
         loader.load(path).handle(function(value) {
             assets.set(handle, cast value);
             states.set(stateKey(assetKey, handle.id), Loaded);
         }, function(error) {
-            states.set(stateKey(assetKey, handle.id), Failed(error));
+            states.set(stateKey(assetKey, handle.id), Failed(LoadFailed(path, Std.string(error))));
         });
 
         return handle;
     }
 
-    public function add<T>(assets:Assets<T>, value:T):Handle<T> {
+    public function add<T:Asset>(assets:Assets<T>, value:T):Handle<T> {
         var handle = assets.add(value);
         states.set(stateKey(assets.typeKey(), handle.id), Loaded);
         return handle;
@@ -84,7 +87,7 @@ class AssetServer implements Resource {
         return textSource(path);
     }
 
-    public function state<T>(assets:Assets<T>, handle:Handle<T>):LoadState {
+    public function loadStateTyped<T:Asset>(assets:Assets<T>, handle:Handle<T>):LoadState {
         var state = states.get(stateKey(assets.typeKey(), handle.id));
         return state != null ? state : NotLoaded;
     }

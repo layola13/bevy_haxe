@@ -2,26 +2,12 @@ package bevy.asset;
 
 import bevy.async.Future;
 
-typedef AssetLoaderFn = String->Future<Dynamic>;
-
-class AssetLoaderRegistration {
-    public var assetKey(default, null):String;
-    public var extensions(default, null):Array<String>;
-    public var load(default, null):AssetLoaderFn;
-
-    public function new(assetKey:String, extensions:Array<String>, load:AssetLoaderFn) {
-        this.assetKey = assetKey;
-        this.extensions = extensions;
-        this.load = load;
-    }
-}
-
 class AssetLoader {
-    public static function create<T>(assetClass:Class<T>, extensions:Array<String>, load:String->Future<T>):AssetLoaderRegistration {
+    public static function create<T:Asset>(assetClass:Class<T>, extensions:Array<String>, load:String->Future<T>):AssetLoaderRegistration {
         return new AssetLoaderRegistration(
             AssetType.keyOf(assetClass),
             normalizeExtensions(extensions),
-            function(path:String) return cast load(path)
+            function(path:String):Future<Asset> return cast load(path)
         );
     }
 

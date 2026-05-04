@@ -2,7 +2,7 @@ package bevy.asset;
 
 import bevy.ecs.Resource;
 
-class Assets<T> implements Resource {
+class Assets<T:Asset> implements Resource {
     public var resourceKey(default, null):String;
 
     private var assetKey:String;

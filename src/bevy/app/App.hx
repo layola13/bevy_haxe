@@ -1,6 +1,7 @@
 package bevy.app;
 
 import bevy.async.Future;
+import bevy.asset.Asset;
 import bevy.asset.AssetApp;
 import bevy.asset.AssetLoaderRegistration;
 import bevy.ecs.World;
@@ -126,7 +127,7 @@ class App {
         return this;
     }
 
-    public function initAsset<T>(assetClass:Class<T>):App {
+    public function initAsset<T:Asset>(assetClass:Class<T>):App {
         return AssetApp.initAsset(this, assetClass);
     }
 

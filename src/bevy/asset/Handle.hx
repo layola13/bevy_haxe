@@ -1,6 +1,6 @@
 package bevy.asset;
 
-class Handle<T> {
+class Handle<T:Asset> {
     public var id(default, null):Int;
 
     public function new(id:Int) {

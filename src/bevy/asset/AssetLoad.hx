@@ -7,16 +7,36 @@ import haxe.macro.Type;
 #end
 
 class AssetLoad {
-    #if macro
     public static macro function load(server:Expr, path:Expr):Expr {
-        var expected = Context.getExpectedType();
-        var assetPath = extractHandleAssetPath(expected, path.pos);
-        var assetExpr = Context.parse(assetPath.join("."), path.pos);
+        var assetExpr = assetClassExprFromHandleType(Context.getExpectedType(), path.pos);
         return macro {
             var __bevyAssetServer:bevy.asset.AssetServer = $server;
-            var __bevyAssets = bevy.asset.AssetApp.requireAssets(cast __bevyAssetServer.__world, $assetExpr);
+            var __bevyAssetWorld = __bevyAssetServer.__world;
+            if (__bevyAssetWorld == null) {
+                throw "AssetServer is not attached to a World";
+            }
+            var __bevyAssets = bevy.asset.AssetApp.requireAssets(__bevyAssetWorld, $assetExpr);
             __bevyAssetServer.loadTyped(__bevyAssets, $path);
         };
+    }
+
+    public static macro function loadState(server:Expr, handle:Expr):Expr {
+        var assetExpr = assetClassExprFromHandleType(Context.typeof(handle), handle.pos);
+        return macro {
+            var __bevyAssetServer:bevy.asset.AssetServer = $server;
+            var __bevyAssetWorld = __bevyAssetServer.__world;
+            if (__bevyAssetWorld == null) {
+                throw "AssetServer is not attached to a World";
+            }
+            var __bevyAssets = bevy.asset.AssetApp.requireAssets(__bevyAssetWorld, $assetExpr);
+            __bevyAssetServer.loadStateTyped(__bevyAssets, $handle);
+        };
+    }
+
+    #if macro
+    static function assetClassExprFromHandleType(type:Type, pos:Position):Expr {
+        var assetPath = extractHandleAssetPath(type, pos);
+        return Context.parse(assetPath.join("."), pos);
     }
 
     static function extractHandleAssetPath(type:Type, pos:Position):Array<String> {

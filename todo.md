@@ -143,5 +143,14 @@
 - Done: Minimal WebGL-ready render context with `RenderContext` and `RenderPlugin`; JS target compiles WebGL/WebGL2 binding code, interp target validates resource state.
 - Done: System param injection now covers `Query<T>`, `Query2<A,B>`, `EventReader<T>`, and `EventWriter<T>`.
 - Done: Initial async ECS borrow diagnostics prevent `@:async @:system` methods from taking `Commands` or `ResMut<T>` directly.
+- Done: `bevy_asset` minimal upstream-aligned app integration is now in place: `AssetPlugin` installs `AssetServer`, `App.initAsset(...)` creates typed `Assets<T>` world resources, `App.registerAssetLoader(...)` registers typed loaders, and `AssetServer.load(...)` can drive typed asset loads through an extension macro path.
+- Done: `World` resource storage now supports explicit parameterized resource keys, which fixes erased-generic collisions for `Assets<T>` and allows `Res<Assets<T>>` / `ResMut<Assets<T>>` system injection to resolve the correct typed asset collection.
 - Verified: `haxe test.hxml`, `haxe build-all.hxml`, JS compile for `app.AppRunTest` and `BuildAll`, plus earlier JS compile/node runs for async, ECS core, ECS macro, reflect macro, app schedule, and asset pipeline tests.
 - Remaining: richer async borrow diagnostics, full WebGL2 draw pipeline, and WebGPU-ready render abstraction.
+- Remaining: generic ECS component keys still use runtime class identity only. This means future component shapes such as `Handle<Mesh>` and `Handle<Image>` will collide once they are inserted as components. This is now an explicit bottom-layer dependency to solve before a real upstream-shaped `bevy_render` asset/component path can be considered complete.
+
+## Asset Notes
+
+- `AssetServer.load(...)` / `loadState(...)` are currently provided through Haxe extension macros in `bevy.asset.AssetLoad`.
+- Because of Haxe macro visibility rules, call sites should explicitly opt in with `using bevy.asset.AssetLoad;` when they want the upstream-like `assetServer.load("path")` syntax.
+- This keeps the public call shape close to upstream Bevy while avoiding an invented alternate API such as mandatory explicit `Class<T>` arguments at each load call.
