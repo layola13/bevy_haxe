@@ -12,9 +12,14 @@ class RenderContext implements Resource {
     public var initialized(default, null):Bool;
     #if js
     public var gl(default, null):Null<js.html.webgl.RenderingContext>;
+    public var lastProgram(default, null):Null<js.html.webgl.Program>;
+    public var lastBuffer(default, null):Null<js.html.webgl.Buffer>;
     #else
     public var gl(default, null):Dynamic;
+    public var lastProgram(default, null):Dynamic;
+    public var lastBuffer(default, null):Dynamic;
     #end
+    public var lastVertexCount(default, null):Int;
 
     public function new(?backend:String) {
         this.backend = backend != null ? backend : "WebGL2";
@@ -24,6 +29,9 @@ class RenderContext implements Resource {
         clearA = 1;
         initialized = false;
         gl = null;
+        lastProgram = null;
+        lastBuffer = null;
+        lastVertexCount = 0;
     }
 
     public function initialize(window:Window):Bool {
@@ -58,6 +66,73 @@ class RenderContext implements Resource {
         if (gl != null) {
             gl.clear(js.html.webgl.RenderingContext.COLOR_BUFFER_BIT | js.html.webgl.RenderingContext.DEPTH_BUFFER_BIT);
         }
+        #end
+    }
+
+    public function createProgram(source:ShaderSource):Bool {
+        #if js
+        if (gl == null) {
+            return false;
+        }
+        var vertex = gl.createShader(js.html.webgl.RenderingContext.VERTEX_SHADER);
+        var fragment = gl.createShader(js.html.webgl.RenderingContext.FRAGMENT_SHADER);
+        if (vertex == null || fragment == null) {
+            return false;
+        }
+        gl.shaderSource(vertex, source.vertex);
+        gl.compileShader(vertex);
+        gl.shaderSource(fragment, source.fragment);
+        gl.compileShader(fragment);
+        var program = gl.createProgram();
+        if (program == null) {
+            return false;
+        }
+        gl.attachShader(program, vertex);
+        gl.attachShader(program, fragment);
+        gl.linkProgram(program);
+        lastProgram = program;
+        return true;
+        #else
+        lastProgram = {};
+        return true;
+        #end
+    }
+
+    public function uploadTriangle(mesh:TriangleMesh):Bool {
+        lastVertexCount = Std.int(mesh.positions.length / 3);
+        #if js
+        if (gl == null) {
+            return false;
+        }
+        var buffer = gl.createBuffer();
+        if (buffer == null) {
+            return false;
+        }
+        lastBuffer = buffer;
+        gl.bindBuffer(js.html.webgl.RenderingContext.ARRAY_BUFFER, buffer);
+        gl.bufferData(
+            js.html.webgl.RenderingContext.ARRAY_BUFFER,
+            new js.lib.Float32Array(mesh.positions),
+            js.html.webgl.RenderingContext.STATIC_DRAW
+        );
+        return true;
+        #else
+        lastBuffer = {};
+        return true;
+        #end
+    }
+
+    public function drawTriangle():Bool {
+        #if js
+        if (gl == null || lastProgram == null || lastBuffer == null || lastVertexCount == 0) {
+            return false;
+        }
+        gl.useProgram(lastProgram);
+        gl.bindBuffer(js.html.webgl.RenderingContext.ARRAY_BUFFER, lastBuffer);
+        gl.drawArrays(js.html.webgl.RenderingContext.TRIANGLES, 0, lastVertexCount);
+        return true;
+        #else
+        return lastProgram != null && lastBuffer != null && lastVertexCount == 3;
         #end
     }
 

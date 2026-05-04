@@ -23,6 +23,7 @@ class SystemMacro {
             }
             switch field.kind {
                 case FFun(fn):
+                    validateAsyncSystem(field, fn);
                     var schedule = parseSchedule(systemMeta);
                     var systemName = classPath + "." + field.name;
                     var methodExpr:Expr = {expr: EField(classExpr, field.name), pos: field.pos};
@@ -45,6 +46,29 @@ class SystemMacro {
             appendToInit(fields, {expr: EBlock(registrations), pos: pos}, pos);
         }
         return fields;
+    }
+
+    static function validateAsyncSystem(field:Field, fn:Function):Void {
+        if (!hasMeta(field.meta, "async")) {
+            return;
+        }
+        for (arg in fn.args) {
+            if (arg.type == null) {
+                continue;
+            }
+            switch arg.type {
+                case TPath(path):
+                    var full = fullPath(path);
+                    switch full {
+                        case "bevy.ecs.Commands" | "Commands":
+                            Context.error("Async systems cannot take Commands yet; split command emission into a follow-up sync system", field.pos);
+                        case "bevy.ecs.ResMut" | "ResMut":
+                            Context.error("Async systems cannot take ResMut yet; split mutable resource access into a sync system", field.pos);
+                        default:
+                    }
+                default:
+            }
+        }
     }
 
     static function resolveArgs(args:Array<FunctionArg>, pos:Position):{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>} {
@@ -70,9 +94,9 @@ class SystemMacro {
                             prelude.push(varDecl(commandsName, macro world.commands(), pos));
                             resolved.push(macro $i{commandsName});
                         case "bevy.ecs.Res" | "Res":
-                            resolved.push(macro new bevy.ecs.Res(world.getResource($p{extractSingleTypePath(path, pos)})));
+                            resolved.push(macro new bevy.ecs.Res(${buildResourceAccess(path, false, pos)}));
                         case "bevy.ecs.ResMut" | "ResMut":
-                            resolved.push(macro new bevy.ecs.ResMut(world.getResource($p{extractSingleTypePath(path, pos)})));
+                            resolved.push(macro new bevy.ecs.ResMut(${buildResourceAccess(path, true, pos)}));
                         case "bevy.ecs.Query" | "Query":
                             resolved.push(macro world.query($p{extractSingleTypePath(path, pos)}));
                         case "bevy.ecs.Query2" | "Query2":
@@ -161,6 +185,51 @@ class SystemMacro {
         }
     }
 
+    static function buildResourceAccess(path:TypePath, mutable:Bool, pos:Position):Expr {
+        if (path.params == null || path.params.length != 1) {
+            Context.error("System resource params require exactly one type parameter", pos);
+        }
+
+        return switch path.params[0] {
+            case TPType(TPath(inner)):
+                if (inner.params != null && inner.params.length > 0) {
+                    var key = buildParameterizedTypeKeyExpr(inner, pos);
+                    macro world.getResourceByKey($key);
+                } else {
+                    macro world.getResource($p{inner.pack.concat([inner.name])});
+                }
+            default:
+                Context.error("System resource params require a class type parameter", pos);
+        }
+    }
+
+    static function buildParameterizedTypeKeyExpr(path:TypePath, pos:Position):Expr {
+        var params:Array<Expr> = [];
+        if (path.params != null) {
+            for (param in path.params) {
+                params.push(buildTypeParamKeyExpr(param, pos));
+            }
+        }
+
+        return macro bevy.ecs.TypeKey.parameterized(
+            bevy.ecs.TypeKey.ofClass($p{path.pack.concat([path.name])}),
+            $a{params}
+        );
+    }
+
+    static function buildTypeParamKeyExpr(param:TypeParam, pos:Position):Expr {
+        return switch param {
+            case TPType(TPath(inner)):
+                if (inner.params != null && inner.params.length > 0) {
+                    buildParameterizedTypeKeyExpr(inner, pos);
+                } else {
+                    macro bevy.ecs.TypeKey.ofClass($p{inner.pack.concat([inner.name])});
+                }
+            default:
+                Context.error("System resource params require class type parameters", pos);
+        }
+    }
+
     static function extractTwoTypePaths(path:TypePath, pos:Position):{a:Array<String>, b:Array<String>} {
         if (path.params == null || path.params.length != 2) {
             Context.error("System Query2 params require exactly two type parameters", pos);
@@ -234,6 +303,15 @@ class SystemMacro {
     static function hasAccess(field:Field, access:Access):Bool {
         for (item in field.access) {
             if (item == access) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static function hasMeta(meta:Metadata, name:String):Bool {
+        for (entry in meta) {
+            if (entry.name == name || entry.name == ":" + name) {
                 return true;
             }
         }

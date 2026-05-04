@@ -163,7 +163,12 @@ class World {
     }
 
     public function insertResource<T>(resource:T):T {
-        resources.set(TypeKey.ofInstance(resource), resource);
+        resources.set(resourceStorageKey(resource), resource);
+        return resource;
+    }
+
+    public function insertResourceByKey<T>(key:String, resource:T):T {
+        resources.set(TypeKey.named(key), resource);
         return resource;
     }
 
@@ -171,11 +176,30 @@ class World {
         return cast resources.get(TypeKey.ofClass(cls));
     }
 
+    public function getResourceByKey<T>(key:String):Null<T> {
+        return cast resources.get(TypeKey.named(key));
+    }
+
     public function removeResource<T>(cls:Class<T>):Null<T> {
         var key = TypeKey.ofClass(cls);
         var value:T = cast resources.get(key);
         resources.remove(key);
         return value;
+    }
+
+    public function removeResourceByKey<T>(key:String):Null<T> {
+        var normalized = TypeKey.named(key);
+        var value:T = cast resources.get(normalized);
+        resources.remove(normalized);
+        return value;
+    }
+
+    public function hasResource<T>(cls:Class<T>):Bool {
+        return resources.exists(TypeKey.ofClass(cls));
+    }
+
+    public function hasResourceByKey(key:String):Bool {
+        return resources.exists(TypeKey.named(key));
     }
 
     public function initEvents<T>(cls:Class<T>):Events<T> {
@@ -195,6 +219,13 @@ class World {
 
     public function sendEvent<T>(event:T):Void {
         initEvents(Type.getClass(event)).send(event);
+    }
+
+    public function clearEvents():Void {
+        for (store in events) {
+            var typed:Events<Dynamic> = cast store;
+            typed.clear();
+        }
     }
 
     public function tick():Int {
@@ -262,5 +293,13 @@ class World {
 
     private function componentChangeKey(entity:Entity, typeKey:String):String {
         return entity.key() + ":" + typeKey;
+    }
+
+    private function resourceStorageKey(resource:Dynamic):String {
+        var explicit = Reflect.field(resource, "resourceKey");
+        if (Std.isOfType(explicit, String) && explicit != null && explicit != "") {
+            return TypeKey.named(cast explicit);
+        }
+        return TypeKey.ofInstance(resource);
     }
 }

@@ -1,9 +1,10 @@
 package bevy.render;
 
 import bevy.app.App;
+import bevy.app.Plugin;
 import bevy.window.Window;
 
-class RenderPlugin {
+class RenderPlugin implements Plugin {
     public var context(default, null):RenderContext;
 
     public function new(?context:RenderContext) {

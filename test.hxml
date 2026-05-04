@@ -30,6 +30,12 @@
 --next
 -cp src
 -cp test
+-main app.AppRunTest
+--interp
+
+--next
+-cp src
+-cp test
 -main asset_new.AssetPipelineTest
 --interp
 

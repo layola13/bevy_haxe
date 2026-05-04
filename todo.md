@@ -94,6 +94,32 @@
   - 默认采用 forAwait(source, fn) DSL；如果必须使用字面量 for await，另起一个源码预处理阶段。
   - 第一目标平台是 JS/Web；WebGL2 优先，WebGPU 作为后续后端。
 
+## Upstream Dependency Notes
+
+- Source of truth is the local Rust Bevy workspace at `~/projects/bevy`, not ad hoc Haxe API design.
+- The port order must follow upstream crate dependencies from bottom to top:
+  1. `bevy_platform`
+  2. `bevy_tasks`
+  3. `bevy_reflect`
+  4. `bevy_ecs`
+  5. `bevy_app`
+  6. `bevy_asset`
+  7. `bevy_window`
+  8. `bevy_render`
+- Direct upstream dependency facts recorded from `Cargo.toml`:
+  - `bevy_platform`: foundational portability layer; provides `std`, `alloc`, `web`, `serialize`, `futures-lite`, `async-io`, synchronization primitives.
+  - `bevy_tasks -> bevy_platform`: task executor layer depends on platform abstractions first.
+  - `bevy_reflect -> bevy_platform`: reflection sits on top of platform support and derive/macros.
+  - `bevy_ecs -> bevy_tasks + bevy_reflect? + bevy_platform`: ECS depends on task execution, platform support, and optional reflection.
+  - `bevy_app -> bevy_ecs + bevy_reflect? + bevy_tasks + bevy_platform`: app lifecycle and plugin system sit above ECS, not below it.
+  - `bevy_asset -> bevy_app + bevy_ecs + bevy_reflect + bevy_tasks + bevy_platform`: asset pipeline depends on the app/plugin/runtime stack and async task layer.
+  - `bevy_window -> bevy_app + bevy_ecs + bevy_input + bevy_math + bevy_platform`, with optional `bevy_asset`/`bevy_image` for custom cursor support.
+  - `bevy_render -> bevy_app + bevy_asset + bevy_ecs + bevy_reflect + bevy_tasks + bevy_window + bevy_platform` plus many render-domain crates (`bevy_image`, `bevy_mesh`, `bevy_shader`, `bevy_camera`, `bevy_time`, `bevy_transform`, `wgpu`).
+- Practical implication for `bevy_haxe`:
+  - Do not continue by inventing top-level render/window APIs first.
+  - `bevy.app` runner/plugin lifecycle must be aligned with upstream before deeper `window` and `render` work.
+  - `bevy.render` should only be expanded after the `app -> asset/window -> render` dependency chain is explicitly mirrored.
+
 ## Implementation Status
 
 - Done: P0 async macro foundation started under `src/bevy/async` and `src/bevy/macro`.
@@ -106,11 +132,16 @@
 - Done: Reflect macro skeleton via `bevy.reflect.Reflect` `@:autoBuild`, generating `typeInfo`, `getField`, `setField`, and TypeRegistry registration.
 - Done: Basic app/schedule/system ABI with `App`, `Schedule`, `SystemRegistry`, `SystemClass`, and `@:system` static method registration.
 - Done: `@:async @:system` methods can be registered and run through `App.update()` with schedule ordering preserved by Future chaining.
+- Done: `bevy.app` was reshaped toward upstream `bevy_app`: `App` now owns plugin lifecycle state, `setRunner`, exit requests, and runner-driven execution instead of baking the loop directly into top-level app logic.
+- Done: `ScheduleRunnerPlugin` and `RunMode` were added as the upstream-aligned headless runner entrypoint, replacing ad hoc loop ownership with plugin-provided runner configuration.
+- Done: `App.update()` still drives `First -> PreUpdate -> Update -> PostUpdate -> Last`, advancing world ticks and clearing frame events after each frame.
+- Done: Minimal `Plugin` interface is in place with lifecycle helpers (`ready`, `finish`, `cleanup`, uniqueness/name hooks via reflection helpers); `WindowPlugin`, `InputPlugin`, and `RenderPlugin` plug into `App` through `addPlugin` / `addPlugins`.
 - Done: System param injection for `World`, `Res<T>`, `ResMut<T>`, and `Commands`, including deferred command apply after async systems complete.
 - Done: Bundle macro skeleton via `bevy.ecs.Bundle`, auto-generating `toBundle()` and supporting `World.spawnBundle` / `Commands.spawnBundle`.
 - Done: Minimal async asset pipeline with `AssetServer`, `Assets<T>`, `Handle<T>`, `TextAsset`, injectable sources, and JS fetch-backed default source.
 - Done: Minimal window/canvas layer with `Window` resource and `WindowPlugin`; JS target can bind or create a canvas, interp target keeps resource state.
 - Done: Minimal WebGL-ready render context with `RenderContext` and `RenderPlugin`; JS target compiles WebGL/WebGL2 binding code, interp target validates resource state.
 - Done: System param injection now covers `Query<T>`, `Query2<A,B>`, `EventReader<T>`, and `EventWriter<T>`.
-- Verified: `haxe test.hxml`, `haxe build-all.hxml`, JS compile and node runs for async, ECS core, ECS macro, reflect macro, app schedule, and asset pipeline tests.
-- Remaining: async ECS borrow diagnostics, input integration, full WebGL2 draw pipeline, and WebGPU-ready render abstraction.
+- Done: Initial async ECS borrow diagnostics prevent `@:async @:system` methods from taking `Commands` or `ResMut<T>` directly.
+- Verified: `haxe test.hxml`, `haxe build-all.hxml`, JS compile for `app.AppRunTest` and `BuildAll`, plus earlier JS compile/node runs for async, ECS core, ECS macro, reflect macro, app schedule, and asset pipeline tests.
+- Remaining: richer async borrow diagnostics, full WebGL2 draw pipeline, and WebGPU-ready render abstraction.

@@ -1,8 +1,9 @@
 package bevy.window;
 
 import bevy.app.App;
+import bevy.app.Plugin;
 
-class WindowPlugin {
+class WindowPlugin implements Plugin {
     public var config(default, null):Window;
 
     public function new(?config:Window) {

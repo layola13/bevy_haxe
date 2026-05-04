@@ -35,7 +35,8 @@ class AppScheduleTest {
         assert(done, "update future should resolve");
         assertEq(8, app.world.getResource(Counter).value, "sync and async systems should run in order");
         assertEq("sync", app.world.getResource(CommandFlag).value, "sync command should apply");
-        assertEq(9, app.world.getResource(AsyncCommandFlag).value, "async command should apply after await");
+        assertEq(9, app.world.getResource(AsyncValue).value, "async system should persist awaited value");
+        assertEq(9, app.world.getResource(AsyncCommandFlag).value, "sync command should apply async result");
         assertEq(8, app.world.getResource(ReadBack).value, "Res param should read resource");
         assertEq(3, app.world.getResource(QueryTotal).value, "Query2 param should read components");
         assertEq("received", app.world.getResource(EventStatus).value, "events should flow through systems");
@@ -68,6 +69,13 @@ class CommandFlag implements Resource {
 }
 
 class AsyncCommandFlag implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AsyncValue implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -124,9 +132,9 @@ class CounterSystems implements SystemClass implements AsyncClass {
 
     @:async
     @:system("Update")
-    public static function addAsync(counter:ResMut<Counter>) {
+    public static function addAsync(world:World) {
         var value = @await Future.resolved(7);
-        counter.value.value += value;
+        world.getResource(Counter).value += value;
     }
 
     @:system("Update")
@@ -136,9 +144,17 @@ class CounterSystems implements SystemClass implements AsyncClass {
 
     @:async
     @:system("Update")
-    public static function asyncCommand(commands:Commands) {
+    public static function asyncValue(world:World) {
         var value = @await Future.resolved(9);
-        commands.insertResource(new AsyncCommandFlag(value));
+        world.insertResource(new AsyncValue(value));
+    }
+
+    @:system("Update")
+    public static function storeAsyncValue(world:World, commands:Commands):Void {
+        var value = world.getResource(AsyncValue);
+        if (value != null) {
+            commands.insertResource(new AsyncCommandFlag(value.value));
+        }
     }
 
     @:system("Update")

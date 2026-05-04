@@ -1,12 +1,13 @@
 package bevy.input;
 
 import bevy.app.App;
+import bevy.app.Plugin;
 import bevy.input.Keyboard.KeyboardInput;
 import bevy.input.Mouse.MouseButtonInput;
 import bevy.input.Mouse.MouseMotion;
 import bevy.window.Window;
 
-class InputPlugin {
+class InputPlugin implements Plugin {
     public function new() {}
 
     public function build(app:App):Void {
