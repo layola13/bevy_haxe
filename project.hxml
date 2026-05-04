@@ -1,0 +1,20 @@
+# Bevy Haxe - Game Engine in Haxe
+
+name: bevy_haxe
+version: 0.1.0
+author: Bevy Community
+license: MIT
+
+target: javascript
+output_dir: bin
+
+haxe DEFINES
+debug
+
+haxe_args: -dce full -J src/haxe
+
+modules:
+  - haxe.macro.Modules
+
+dependencies:
+  js: {}
