@@ -1,0 +1,52 @@
+-cp src
+-cp test
+-main async.AsyncMacroTest
+--interp
+
+--next
+-cp src
+-cp test
+-main ecs.EcsCoreTest
+--interp
+
+--next
+-cp src
+-cp test
+-main macro.EcsMacroTest
+--interp
+
+--next
+-cp src
+-cp test
+-main macro.ReflectMacroTest
+--interp
+
+--next
+-cp src
+-cp test
+-main app.AppScheduleTest
+--interp
+
+--next
+-cp src
+-cp test
+-main asset_new.AssetPipelineTest
+--interp
+
+--next
+-cp src
+-cp test
+-main window.WindowPluginTest
+--interp
+
+--next
+-cp src
+-cp test
+-main render.RenderContextTest
+--interp
+
+--next
+-cp src
+-cp test
+-main input.InputPluginTest
+--interp

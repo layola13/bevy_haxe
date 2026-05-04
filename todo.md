@@ -93,3 +93,24 @@
   - for await (...) 原生语法不作为 Haxe 源码直接支持，因为 Haxe 4.3.6 解析阶段会报错。
   - 默认采用 forAwait(source, fn) DSL；如果必须使用字面量 for await，另起一个源码预处理阶段。
   - 第一目标平台是 JS/Web；WebGL2 优先，WebGPU 作为后续后端。
+
+## Implementation Status
+
+- Done: P0 async macro foundation started under `src/bevy/async` and `src/bevy/macro`.
+- Done: `AsyncClass` provides `@:autoBuild` support for `@:async` methods.
+- Done: `@await expr` and `@:await expr` are rewritten inside `@:async` methods.
+- Done: `forAwait(source, value -> { ... @await ... })` is supported as the Haxe-compatible form of `for await`.
+- Done: Promise-backed JS scheduling, `Future`, `Task`, `AsyncIterator`, `join`, `race`, and cancellation basics compile and run.
+- Done: Core `bevy.ecs` ABI started with generation-safe `Entity`, `World`, resources, events, queries, change ticks, and deferred `Commands`.
+- Done: Component/resource/event registration macro skeletons via `@:autoBuild`, feeding `ComponentRegistry`, `ResourceRegistry`, `EventRegistry`, and `TypeRegistry`.
+- Done: Reflect macro skeleton via `bevy.reflect.Reflect` `@:autoBuild`, generating `typeInfo`, `getField`, `setField`, and TypeRegistry registration.
+- Done: Basic app/schedule/system ABI with `App`, `Schedule`, `SystemRegistry`, `SystemClass`, and `@:system` static method registration.
+- Done: `@:async @:system` methods can be registered and run through `App.update()` with schedule ordering preserved by Future chaining.
+- Done: System param injection for `World`, `Res<T>`, `ResMut<T>`, and `Commands`, including deferred command apply after async systems complete.
+- Done: Bundle macro skeleton via `bevy.ecs.Bundle`, auto-generating `toBundle()` and supporting `World.spawnBundle` / `Commands.spawnBundle`.
+- Done: Minimal async asset pipeline with `AssetServer`, `Assets<T>`, `Handle<T>`, `TextAsset`, injectable sources, and JS fetch-backed default source.
+- Done: Minimal window/canvas layer with `Window` resource and `WindowPlugin`; JS target can bind or create a canvas, interp target keeps resource state.
+- Done: Minimal WebGL-ready render context with `RenderContext` and `RenderPlugin`; JS target compiles WebGL/WebGL2 binding code, interp target validates resource state.
+- Done: System param injection now covers `Query<T>`, `Query2<A,B>`, `EventReader<T>`, and `EventWriter<T>`.
+- Verified: `haxe test.hxml`, `haxe build-all.hxml`, JS compile and node runs for async, ECS core, ECS macro, reflect macro, app schedule, and asset pipeline tests.
+- Remaining: async ECS borrow diagnostics, input integration, full WebGL2 draw pipeline, and WebGPU-ready render abstraction.
