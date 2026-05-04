@@ -41,7 +41,7 @@ class Res<T> {
     public var ptr:Dynamic;
     
     /** 组件ticks */
-    public var ticks:ComponentTicks;
+    public var ticks:ComponentTicksSimple;
     
     /** 上次改变tick */
     public var lastChangeTick:UInt;
@@ -79,7 +79,7 @@ class ResMut<T> {
     public var ptr:Dynamic;
     
     /** 组件ticks */
-    public var ticks:ComponentTicks;
+    public var ticks:ComponentTicksSimple;
     
     /** 上次改变tick */
     public var lastChangeTick:UInt;
@@ -115,7 +115,7 @@ class ResMut<T> {
 /**
  * 组件ticks信息
  */
-class ComponentTicks {
+class ComponentTicksSimple {
     /** 增加tick */
     public var added:UInt;
     
@@ -136,7 +136,7 @@ class ComponentTicks {
 /**
  * Query状态
  */
-class QueryState<D:QueryData, F:QueryFilter> {
+class QueryState<D, F> {
     public var archetypeId:Int = 0;
     public var matchedArchetypesLength:Int = 0;
     public var archetypeMatchesFilter:Array<Bool> = [];
@@ -147,19 +147,9 @@ class QueryState<D:QueryData, F:QueryFilter> {
 }
 
 /**
- * Query数据标记接口
- */
-interface QueryData {}
-
-/**
- * Query过滤器标记接口
- */
-interface QueryFilter {}
-
-/**
  * Query<T> 系统参数 - 提供对World中存储的Component数据的选择性访问
  */
-class Query<D:QueryData, F:QueryFilter> implements SystemParam implements Deferred {
+class Query<D, F> implements SystemParam implements Deferred {
     /** Query状态 */
     public var state:QueryState<D, F>;
     
@@ -255,7 +245,7 @@ class Query<D:QueryData, F:QueryFilter> implements SystemParam implements Deferr
 /**
  * Query迭代器
  */
-class QueryIterator<D:QueryData, F:QueryFilter> {
+class QueryIterator<D, F> {
     private var query:Query<D, F>;
     private var entities:Array<Entity>;
     private var index:Int = 0;

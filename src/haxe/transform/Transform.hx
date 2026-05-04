@@ -62,7 +62,10 @@ class Transform implements haxe.ecs.Component {
      * Create transform from a matrix
      */
     public static function fromMatrix(matrix:Mat4):Transform {
-        var (scale, rotation, translation) = matrix.toScaleRotationTranslation();
+        var srt = matrix.toScaleRotationTranslation();
+        var scale = srt.scale;
+        var rotation = srt.rotation;
+        var translation = srt.translation;
         return new Transform(translation, rotation, scale);
     }
     

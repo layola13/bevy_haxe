@@ -121,16 +121,16 @@ class GlobalTransform implements haxe.ecs.Component {
      * Get the scale component
      */
     public function scale():Vec3 {
-        var (s, _, _) = toScaleRotationTranslation();
-        return s;
+        var srt = toScaleRotationTranslation();
+        return srt.scale;
     }
     
     /**
      * Get the rotation component as quaternion
      */
     public function rotation():Quat {
-        var (_, r, _) = toScaleRotationTranslation();
-        return r;
+        var srt2 = toScaleRotationTranslation();
+        return srt2.rotation;
     }
     
     /**
@@ -169,8 +169,8 @@ class GlobalTransform implements haxe.ecs.Component {
      * Convert to Transform (local transform - loses hierarchy info)
      */
     public function toTransform():Transform {
-        var (scale, rotation, translation) = toScaleRotationTranslation();
-        return new Transform(translation, rotation, scale);
+        var _srt3 = toScaleRotationTranslation();
+        return new Transform(_srt3.translation, _srt3.rotation, _srt3.scale);
     }
     
     /**
@@ -226,8 +226,8 @@ class GlobalTransform implements haxe.ecs.Component {
      * Convert to string representation
      */
     public function toString():String {
-        var (scale, rotation, translation) = toScaleRotationTranslation();
-        return 'GlobalTransform(translation: $translation, rotation: $rotation, scale: $scale)';
+        var _srts = toScaleRotationTranslation();
+        return 'GlobalTransform(translation: ${_srts.translation}, rotation: ${_srts.rotation}, scale: ${_srts.scale})';
     }
     
     // Helper functions

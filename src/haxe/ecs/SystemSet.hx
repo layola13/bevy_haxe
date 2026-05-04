@@ -181,7 +181,7 @@ interface Condition {
     /**
      * Whether this condition depends on system state.
      */
-    public var dependsOn(never):Bool;
+    public var dependsOn(get, never):Bool;
 }
 
 /**
@@ -194,14 +194,14 @@ class SimpleCondition implements Condition {
         this.fn = fn;
     }
     
-    public function run(get, never):System -> Bool {
+    public function get_run():System -> Bool {
         var f = fn;
         return function(sys:System):Bool {
             return f();
         }
     }
     
-    public function dependsOn(get, never):Bool {
+    public function get_dependsOn():Bool {
         return false;
     }
 }
@@ -216,7 +216,7 @@ class ResourceCondition<T:Resource> implements Condition {
         this.exists = exists;
     }
     
-    public function run(get, never):System -> Bool {
+    public function get_run():System -> Bool {
         var checkExists = exists;
         return function(sys:System):Bool {
             // Simplified - would need World access in real implementation
@@ -224,7 +224,7 @@ class ResourceCondition<T:Resource> implements Condition {
         }
     }
     
-    public function dependsOn(get, never):Bool {
+    public function get_dependsOn():Bool {
         return true;
     }
 }

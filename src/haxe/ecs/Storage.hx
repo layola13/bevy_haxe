@@ -275,7 +275,3 @@ class SparseSets {
     }
 }
 
-/**
- * Type alias for component id
- */
-typedef ComponentId = UInt;

@@ -623,7 +623,7 @@ class PreHashed<T> {
     /**
      * Create a PreHashed wrapper with auto-computed hash.
      */
-    public static function make(value:T):PreHashed<T> {
+    public static function make<T2>(value:T2):PreHashed<T2> {
         var h:Int;
         if (Std.is(value, Int)) {
             h = Hash.fnv1aInt(cast value);
@@ -632,7 +632,7 @@ class PreHashed<T> {
         } else {
             h = Hash.hashObject(value);
         }
-        return new PreHashed(value, h);
+        return new PreHashed<T2>(value, h);
     }
 }
 

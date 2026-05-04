@@ -15,12 +15,21 @@ import haxe.ds.GenericStack;
  * - `haxe.Equatable`
  * - `haxe.Hashable`
  */
-interface States extends ISpecialize {
-    // Note: States should implement:
-    // - Clone (via haxe.Cloneable or special function)
-    // - equals(other:States):Bool for PartialEq/Eq
-    // - hashCode():Int for Hash
-    // - Implementation for 'static lifetime is handled by haxe.ISpecialize
+interface States {
+    /**
+     * Compare equality with another States value.
+     */
+    function equals(other:States):Bool;
+
+    /**
+     * Compute a hash code for this state value.
+     */
+    function hashCode():Int;
+
+    /**
+     * Clone / copy this state value.
+     */
+    function clone():States;
 }
 
 /**

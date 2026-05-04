@@ -61,25 +61,20 @@ interface QueryData<T> extends WorldQuery<T> {
     var itemType(get, never): Class<T>;
 }
 
-/**
- * Base interface for query filters (conditions)
- */
-interface QueryFilter extends WorldQuery<QueryFilter> {
-    /**
-     * Whether this filter is archetypal (can use archetype-level filtering)
-     */
-    var isArchetypal(get, never): Bool;
-}
 
 /**
  * Component set for matching checks
  */
-abstract ComponentSet(Set<Int>) {
-    public inline function new(set: Set<Int>) {
-        this = set;
+abstract ComponentSet(haxe.ds.Map<Int, Bool>) from haxe.ds.Map<Int, Bool> {
+    public inline function new() {
+        this = new haxe.ds.Map<Int, Bool>();
+    }
+
+    public inline function add(id: Int): Void {
+        this.set(id, true);
     }
 
     public inline function contains(id: Int): Bool {
-        return this.contains(id);
+        return this.exists(id);
     }
 }

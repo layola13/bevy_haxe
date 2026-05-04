@@ -1,9 +1,9 @@
 package haxe.state;
 
 import haxe.app.App;
-import haxe.ecs.schedule.Schedule;
-import haxe.ecs.schedule.ScheduleLabel;
-import haxe.ecs.schedule.Schedules;
+import haxe.ecs.Schedule;
+import haxe.ecs.SystemSet;
+import haxe.ecs.World;
 
 /**
  * The label of a Schedule that only runs whenever State<S> enters the provided state.
@@ -11,7 +11,7 @@ import haxe.ecs.schedule.Schedules;
  * This schedule ignores identity transitions.
  */
 @:generic
-class OnEnter<T:States> implements ScheduleLabel {
+class OnEnter<T:States> implements SystemSetLabel {
     public var state(default, null):T;
     
     public function new(state:T) {
@@ -21,6 +21,10 @@ class OnEnter<T:States> implements ScheduleLabel {
     public function toString():String {
         return 'OnEnter(${state})';
     }
+
+    public function getTypeId():Any {
+        return Type.typeof(this);
+    }
 }
 
 /**
@@ -29,7 +33,7 @@ class OnEnter<T:States> implements ScheduleLabel {
  * This schedule ignores identity transitions.
  */
 @:generic
-class OnExit<T:States> implements ScheduleLabel {
+class OnExit<T:States> implements SystemSetLabel {
     public var state(default, null):T;
     
     public function new(state:T) {
@@ -38,6 +42,10 @@ class OnExit<T:States> implements ScheduleLabel {
     
     public function toString():String {
         return 'OnExit(${state})';
+    }
+
+    public function getTypeId():Any {
+        return Type.typeof(this);
     }
 }
 
@@ -49,7 +57,7 @@ class OnExit<T:States> implements ScheduleLabel {
  * This schedule will run on identity transitions.
  */
 @:generic
-class OnTransition<T:States> implements ScheduleLabel {
+class OnTransition<T:States> implements SystemSetLabel {
     public var exited:T;
     public var entered:T;
     
@@ -61,6 +69,10 @@ class OnTransition<T:States> implements ScheduleLabel {
     public function toString():String {
         return 'OnTransition(${exited} -> ${entered})';
     }
+
+    public function getTypeId():Any {
+        return Type.typeof(this);
+    }
 }
 
 /**
@@ -69,13 +81,17 @@ class OnTransition<T:States> implements ScheduleLabel {
  * Runs state transitions. By default, it will be triggered once before PreStartup
  * and then each frame after PreUpdate.
  */
-class StateTransitionSchedule implements ScheduleLabel {
+class StateTransitionSchedule implements SystemSetLabel {
     public static var instance(default, null):StateTransitionSchedule = new StateTransitionSchedule();
     
     private function new() {}
     
     public function toString():String {
         return 'StateTransition';
+    }
+
+    public function getTypeId():Any {
+        return Type.typeof(this);
     }
 }
 

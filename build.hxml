@@ -1,0 +1,4 @@
+-p src
+-main Main
+--js bin/bevy.js
+--dce full

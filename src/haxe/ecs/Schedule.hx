@@ -1,11 +1,8 @@
 package haxe.ecs;
 
 import haxe.ecs.schedule.ScheduleGraph;
-import haxe.ecs.schedule.SystemNode;
 import haxe.ecs.schedule.SystemSets;
 import haxe.ecs.schedule.node.DiGraph;
-import haxe.ecs.system.System;
-import haxe.ecs.world.World;
 
 /**
  * A collection of systems, stages, and conditions that are run together.
@@ -141,7 +138,7 @@ class Schedule {
 /**
  * Label trait for identifying schedules.
  */
-interface ScheduleLabel {
+interface IScheduleLabel {
     /**
      * Returns the unique identifier for this schedule label.
      */
@@ -149,10 +146,10 @@ interface ScheduleLabel {
 }
 
 /**
- * Default implementation of ScheduleLabel using interning.
+ * Default implementation of schedule label using interning.
  */
 @:keep
-class ScheduleLabel implements ScheduleLabel {
+class ScheduleLabel implements IScheduleLabel implements SystemSetLabel {
     private static var counter:Int = 0;
     private var id:String;
     private var typeId:Any;
@@ -164,6 +161,10 @@ class ScheduleLabel implements ScheduleLabel {
     
     public function getId():String {
         return id;
+    }
+
+    public function getTypeId():Any {
+        return typeId;
     }
     
     public function hashCode():Int {

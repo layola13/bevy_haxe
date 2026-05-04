@@ -1,6 +1,6 @@
 package haxe.ecs.schedule.node;
 
-import haxe.ecs.schedule.InternedSystemSet;
+import haxe.ecs.SystemSet;
 
 /**
  * Directed graph implementation for schedule dependency ordering.

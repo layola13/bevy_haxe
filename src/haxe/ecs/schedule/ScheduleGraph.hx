@@ -1,9 +1,9 @@
 package haxe.ecs.schedule;
 
-import haxe.ecs.system.System;
-import haxe.ecs.system.FilteredAccessSet;
+import haxe.ecs.System;
+import haxe.ecs.SystemSet;
+import haxe.ecs.World;
 import haxe.ecs.schedule.node.DiGraph;
-import haxe.ecs.world.World;
 
 /**
  * Graph structure for scheduling systems.

@@ -3,7 +3,7 @@ package haxe.ecs;
 /**
  * System状态标志位
  */
-@:enum abstract SystemStateFlags(Int) {
+enum abstract SystemStateFlags(Int) {
     var None = 0;
     /** 系统不能跨线程发送 */
     var NonSend = 1 << 0;
