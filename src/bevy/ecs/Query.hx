@@ -32,12 +32,14 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private var world:World;
     private var componentClass:Class<T>;
     private var componentKey:Null<String>;
+    private var lastRunTick:Int;
     private var filters:Array<bevy.ecs.QueryFilter>;
 
-    public function new(world:World, componentClass:Class<T>, componentKey:Null<String>) {
+    public function new(world:World, componentClass:Class<T>, componentKey:Null<String>, lastRunTick:Int = 0) {
         this.world = world;
         this.componentClass = componentClass;
         this.componentKey = componentKey;
+        this.lastRunTick = lastRunTick;
         filters = [];
     }
 
@@ -70,7 +72,7 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function toArray():Array<QueryItem<T>> {
-        return world.queryOne(componentClass, filters, componentKey);
+        return world.queryOne(componentClass, filters, componentKey, lastRunTick);
     }
 
     public function iter():Array<QueryItem<T>> {
@@ -85,6 +87,10 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return toArray().length;
     }
 
+    public function iterCombinations(size:Int):Array<Array<QueryItem<T>>> {
+        return QueryCombinations.build(toArray(), size);
+    }
+
     public function contains(entity:Entity):Bool {
         return get(entity) != null;
     }
@@ -94,12 +100,12 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return null;
         }
 
-        var entityData = Type.getClassName(cast componentClass) == Type.getClassName(Entity);
-        if (!entityData && world.get(entity, componentClass, componentKey) == null) {
+        var syntheticData = isSyntheticQueryDataClass(componentClass);
+        if (!syntheticData && world.get(entity, componentClass, componentKey) == null) {
             return null;
         }
 
-        var items = world.queryOne(componentClass, filters, componentKey);
+        var items = world.queryOne(componentClass, filters, componentKey, lastRunTick);
         for (item in items) {
             if (item.entity.equals(entity)) {
                 return item;
@@ -122,6 +128,10 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return result;
     }
 
+    public function iterManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return iterMany(entities != null ? entities.toArray() : null);
+    }
+
     public function getMany(entities:Array<Entity>):Array<QueryItem<T>> {
         var result:Array<QueryItem<T>> = [];
         if (entities == null) {
@@ -140,6 +150,10 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             result.push(item);
         }
         return result;
+    }
+
+    public function getManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return getMany(entities != null ? entities.toArray() : null);
     }
 
     public function getSingle():Null<QueryItem<T>> {
@@ -164,6 +178,26 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         }
         return items[0];
     }
+
+    private inline function isEntityClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Entity);
+    }
+
+    private inline function isSpawnDetailsClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
+    }
+
+    private inline function isHasClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Has);
+    }
+
+    private inline function isOptionClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Option);
+    }
+
+    private inline function isSyntheticQueryDataClass<C>(cls:Class<C>):Bool {
+        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls);
+    }
 }
 
 class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
@@ -172,14 +206,16 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private var bClass:Class<B>;
     private var aKey:Null<String>;
     private var bKey:Null<String>;
+    private var lastRunTick:Int;
     private var filters:Array<bevy.ecs.QueryFilter>;
 
-    public function new(world:World, aClass:Class<A>, bClass:Class<B>, aKey:Null<String>, bKey:Null<String>) {
+    public function new(world:World, aClass:Class<A>, bClass:Class<B>, aKey:Null<String>, bKey:Null<String>, lastRunTick:Int = 0) {
         this.world = world;
         this.aClass = aClass;
         this.bClass = bClass;
         this.aKey = aKey;
         this.bKey = bKey;
+        this.lastRunTick = lastRunTick;
         filters = [];
     }
 
@@ -212,7 +248,7 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function toArray():Array<QueryItem2<A, B>> {
-        return world.queryTwo(aClass, bClass, filters, aKey, bKey);
+        return world.queryTwo(aClass, bClass, filters, aKey, bKey, lastRunTick);
     }
 
     public function iter():Array<QueryItem2<A, B>> {
@@ -227,6 +263,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return toArray().length;
     }
 
+    public function iterCombinations(size:Int):Array<Array<QueryItem2<A, B>>> {
+        return QueryCombinations.build(toArray(), size);
+    }
+
     public function contains(entity:Entity):Bool {
         return get(entity) != null;
     }
@@ -238,13 +278,26 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
 
         var aEntityData = isEntityClass(aClass);
         var bEntityData = isEntityClass(bClass);
-        var a = aEntityData ? cast entity : world.get(entity, aClass, aKey);
-        var b = bEntityData ? cast entity : world.get(entity, bClass, bKey);
-        if (a == null || b == null) {
+        var aSpawnDetailsData = isSpawnDetailsClass(aClass);
+        var bSpawnDetailsData = isSpawnDetailsClass(bClass);
+        var aHasData = isHasClass(aClass);
+        var bHasData = isHasClass(bClass);
+        var aOptionData = isOptionClass(aClass);
+        var bOptionData = isOptionClass(bClass);
+        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && world.get(entity, aClass, aKey) == null) {
+            return null;
+        }
+        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && world.get(entity, bClass, bKey) == null) {
+            return null;
+        }
+        if (aSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
+            return null;
+        }
+        if (bSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
             return null;
         }
 
-        var items = world.queryTwo(aClass, bClass, filters, aKey, bKey);
+        var items = world.queryTwo(aClass, bClass, filters, aKey, bKey, lastRunTick);
         for (item in items) {
             if (item.entity.equals(entity)) {
                 return item;
@@ -267,6 +320,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return result;
     }
 
+    public function iterManyUnique(entities:UniqueEntityArray):Array<QueryItem2<A, B>> {
+        return iterMany(entities != null ? entities.toArray() : null);
+    }
+
     public function getMany(entities:Array<Entity>):Array<QueryItem2<A, B>> {
         var result:Array<QueryItem2<A, B>> = [];
         if (entities == null) {
@@ -285,6 +342,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             result.push(item);
         }
         return result;
+    }
+
+    public function getManyUnique(entities:UniqueEntityArray):Array<QueryItem2<A, B>> {
+        return getMany(entities != null ? entities.toArray() : null);
     }
 
     public function getSingle():Null<QueryItem2<A, B>> {
@@ -313,6 +374,18 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private inline function isEntityClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
+
+    private inline function isSpawnDetailsClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
+    }
+
+    private inline function isHasClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Has);
+    }
+
+    private inline function isOptionClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Option);
+    }
 }
 
 class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
@@ -323,9 +396,10 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private var aKey:Null<String>;
     private var bKey:Null<String>;
     private var cKey:Null<String>;
+    private var lastRunTick:Int;
     private var filters:Array<bevy.ecs.QueryFilter>;
 
-    public function new(world:World, aClass:Class<A>, bClass:Class<B>, cClass:Class<C>, aKey:Null<String>, bKey:Null<String>, cKey:Null<String>) {
+    public function new(world:World, aClass:Class<A>, bClass:Class<B>, cClass:Class<C>, aKey:Null<String>, bKey:Null<String>, cKey:Null<String>, lastRunTick:Int = 0) {
         this.world = world;
         this.aClass = aClass;
         this.bClass = bClass;
@@ -333,6 +407,7 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         this.aKey = aKey;
         this.bKey = bKey;
         this.cKey = cKey;
+        this.lastRunTick = lastRunTick;
         filters = [];
     }
 
@@ -365,7 +440,7 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function toArray():Array<QueryItem3<A, B, C>> {
-        return world.queryThree(aClass, bClass, cClass, filters, aKey, bKey, cKey);
+        return world.queryThree(aClass, bClass, cClass, filters, aKey, bKey, cKey, lastRunTick);
     }
 
     public function iter():Array<QueryItem3<A, B, C>> {
@@ -380,6 +455,10 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return toArray().length;
     }
 
+    public function iterCombinations(size:Int):Array<Array<QueryItem3<A, B, C>>> {
+        return QueryCombinations.build(toArray(), size);
+    }
+
     public function contains(entity:Entity):Bool {
         return get(entity) != null;
     }
@@ -392,14 +471,35 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var aEntityData = isEntityClass(aClass);
         var bEntityData = isEntityClass(bClass);
         var cEntityData = isEntityClass(cClass);
-        var a = aEntityData ? cast entity : world.get(entity, aClass, aKey);
-        var b = bEntityData ? cast entity : world.get(entity, bClass, bKey);
-        var c = cEntityData ? cast entity : world.get(entity, cClass, cKey);
-        if (a == null || b == null || c == null) {
+        var aSpawnDetailsData = isSpawnDetailsClass(aClass);
+        var bSpawnDetailsData = isSpawnDetailsClass(bClass);
+        var cSpawnDetailsData = isSpawnDetailsClass(cClass);
+        var aHasData = isHasClass(aClass);
+        var bHasData = isHasClass(bClass);
+        var cHasData = isHasClass(cClass);
+        var aOptionData = isOptionClass(aClass);
+        var bOptionData = isOptionClass(bClass);
+        var cOptionData = isOptionClass(cClass);
+        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && world.get(entity, aClass, aKey) == null) {
+            return null;
+        }
+        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && world.get(entity, bClass, bKey) == null) {
+            return null;
+        }
+        if (!cEntityData && !cSpawnDetailsData && !cHasData && !cOptionData && world.get(entity, cClass, cKey) == null) {
+            return null;
+        }
+        if (aSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
+            return null;
+        }
+        if (bSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
+            return null;
+        }
+        if (cSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
             return null;
         }
 
-        var items = world.queryThree(aClass, bClass, cClass, filters, aKey, bKey, cKey);
+        var items = world.queryThree(aClass, bClass, cClass, filters, aKey, bKey, cKey, lastRunTick);
         for (item in items) {
             if (item.entity.equals(entity)) {
                 return item;
@@ -422,6 +522,10 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return result;
     }
 
+    public function iterManyUnique(entities:UniqueEntityArray):Array<QueryItem3<A, B, C>> {
+        return iterMany(entities != null ? entities.toArray() : null);
+    }
+
     public function getMany(entities:Array<Entity>):Array<QueryItem3<A, B, C>> {
         var result:Array<QueryItem3<A, B, C>> = [];
         if (entities == null) {
@@ -440,6 +544,10 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             result.push(item);
         }
         return result;
+    }
+
+    public function getManyUnique(entities:UniqueEntityArray):Array<QueryItem3<A, B, C>> {
+        return getMany(entities != null ? entities.toArray() : null);
     }
 
     public function getSingle():Null<QueryItem3<A, B, C>> {
@@ -468,6 +576,18 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private inline function isEntityClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
+
+    private inline function isSpawnDetailsClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
+    }
+
+    private inline function isHasClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Has);
+    }
+
+    private inline function isOptionClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Option);
+    }
 }
 
 @:allow(bevy.macro.SystemMacro)
@@ -477,14 +597,16 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
     private var itemKeys:Array<Null<String>>;
     private var tupleFilters:Array<bevy.ecs.QueryFilter>;
     private var tupleFactory:Array<Any>->T;
+    private var tupleLastRunTick:Int;
 
-    public function new(world:World, tupleClass:Class<T>, tupleFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>) {
-        super(world, tupleClass, null);
+    public function new(world:World, tupleClass:Class<T>, tupleFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>, lastRunTick:Int = 0) {
+        super(world, tupleClass, null, lastRunTick);
         this.worldRef = world;
         this.tupleFactory = tupleFactory;
         this.itemClasses = itemClasses;
         this.itemKeys = itemKeys;
         this.tupleFilters = filters != null ? filters.copy() : [];
+        this.tupleLastRunTick = lastRunTick;
     }
 
     override public function filter(value:bevy.ecs.QueryFilter):Query<T, F> {
@@ -520,7 +642,7 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
     }
 
     override public function toArray():Array<QueryItem<T>> {
-        var raw = worldRef.queryTuple(itemClasses, tupleFilters, itemKeys);
+        var raw = worldRef.queryTuple(itemClasses, tupleFilters, itemKeys, tupleLastRunTick);
         var result:Array<QueryItem<T>> = [];
         for (item in raw) {
             result.push({
@@ -533,6 +655,10 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
 
     override public function iter():Array<QueryItem<T>> {
         return toArray();
+    }
+
+    override public function iterCombinations(size:Int):Array<Array<QueryItem<T>>> {
+        return QueryCombinations.build(toArray(), size);
     }
 
     override public function get(entity:Entity):Null<QueryItem<T>> {
@@ -563,6 +689,10 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
         return result;
     }
 
+    override public function iterManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return iterMany(entities != null ? entities.toArray() : null);
+    }
+
     override public function getMany(entities:Array<Entity>):Array<QueryItem<T>> {
         var result:Array<QueryItem<T>> = [];
         if (entities == null) {
@@ -581,6 +711,10 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
             result.push(item);
         }
         return result;
+    }
+
+    override public function getManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return getMany(entities != null ? entities.toArray() : null);
     }
 
     override public function getSingle():Null<QueryItem<T>> {
@@ -604,5 +738,180 @@ class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
             throw new QuerySingleMultipleEntitiesError("Query");
         }
         return items[0];
+    }
+}
+
+@:allow(bevy.macro.SystemMacro)
+class QueryAnyOf<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query<T, F> {
+    private var worldRef:World;
+    private var itemClasses:Array<Class<Any>>;
+    private var itemKeys:Array<Null<String>>;
+    private var anyOfFilters:Array<bevy.ecs.QueryFilter>;
+    private var anyOfFactory:Array<Any>->T;
+
+    public function new(world:World, anyOfClass:Class<T>, anyOfFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>) {
+        super(world, anyOfClass, null);
+        this.worldRef = world;
+        this.anyOfFactory = anyOfFactory;
+        this.itemClasses = itemClasses;
+        this.itemKeys = itemKeys;
+        this.anyOfFilters = filters != null ? filters.copy() : [];
+    }
+
+    override public function filter(value:bevy.ecs.QueryFilter):Query<T, F> {
+        anyOfFilters.push(value);
+        return this;
+    }
+
+    override public function filterAll(values:Array<bevy.ecs.QueryFilter>):Query<T, F> {
+        for (value in values) {
+            anyOfFilters.push(value);
+        }
+        return this;
+    }
+
+    override public function with<C>(cls:Class<C>, ?filterKey:String):Query<T, F> {
+        anyOfFilters.push(With.of(cls, filterKey));
+        return this;
+    }
+
+    override public function without<C>(cls:Class<C>, ?filterKey:String):Query<T, F> {
+        anyOfFilters.push(Without.of(cls, filterKey));
+        return this;
+    }
+
+    override public function added<C>(cls:Class<C>, sinceTick:Int, ?filterKey:String):Query<T, F> {
+        anyOfFilters.push(Added.of(cls, sinceTick, filterKey));
+        return this;
+    }
+
+    override public function changed<C>(cls:Class<C>, sinceTick:Int, ?filterKey:String):Query<T, F> {
+        anyOfFilters.push(Changed.of(cls, sinceTick, filterKey));
+        return this;
+    }
+
+    override public function toArray():Array<QueryItem<T>> {
+        var raw = worldRef.queryAnyOf(itemClasses, anyOfFilters, itemKeys);
+        var result:Array<QueryItem<T>> = [];
+        for (item in raw) {
+            result.push({
+                entity: item.entity,
+                component: anyOfFactory(item.components)
+            });
+        }
+        return result;
+    }
+
+    override public function iter():Array<QueryItem<T>> {
+        return toArray();
+    }
+
+    override public function iterCombinations(size:Int):Array<Array<QueryItem<T>>> {
+        return QueryCombinations.build(toArray(), size);
+    }
+
+    override public function get(entity:Entity):Null<QueryItem<T>> {
+        if (!worldRef.isAlive(entity)) {
+            return null;
+        }
+
+        var items = toArray();
+        for (item in items) {
+            if (item.entity.equals(entity)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    override public function iterMany(entities:Array<Entity>):Array<QueryItem<T>> {
+        var result:Array<QueryItem<T>> = [];
+        if (entities == null) {
+            return result;
+        }
+        for (entity in entities) {
+            var item = get(entity);
+            if (item != null) {
+                result.push(item);
+            }
+        }
+        return result;
+    }
+
+    override public function iterManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return iterMany(entities != null ? entities.toArray() : null);
+    }
+
+    override public function getMany(entities:Array<Entity>):Array<QueryItem<T>> {
+        var result:Array<QueryItem<T>> = [];
+        if (entities == null) {
+            return result;
+        }
+        for (entity in entities) {
+            try {
+                worldRef.entity(entity);
+            } catch (error:EntityDoesNotExistError) {
+                throw new QueryEntityNotSpawnedError(entity, "Query", error);
+            }
+            var item = get(entity);
+            if (item == null) {
+                throw new QueryDoesNotMatchError(entity, "Query");
+            }
+            result.push(item);
+        }
+        return result;
+    }
+
+    override public function getManyUnique(entities:UniqueEntityArray):Array<QueryItem<T>> {
+        return getMany(entities != null ? entities.toArray() : null);
+    }
+
+    override public function getSingle():Null<QueryItem<T>> {
+        var items = toArray();
+        if (items.length == 1) {
+            return items[0];
+        }
+        return null;
+    }
+
+    override public function singleOrNull():Null<QueryItem<T>> {
+        return getSingle();
+    }
+
+    override public function single():QueryItem<T> {
+        var items = toArray();
+        if (items.length == 0) {
+            throw new QuerySingleNoEntitiesError("Query");
+        }
+        if (items.length > 1) {
+            throw new QuerySingleMultipleEntitiesError("Query");
+        }
+        return items[0];
+    }
+}
+
+class QueryCombinations {
+    public static function build<T>(items:Array<T>, size:Int):Array<Array<T>> {
+        var result:Array<Array<T>> = [];
+        if (items == null || size <= 0 || size > items.length) {
+            return result;
+        }
+        collect(items, size, 0, [], result);
+        return result;
+    }
+
+    private static function collect<T>(items:Array<T>, size:Int, start:Int, current:Array<T>, result:Array<Array<T>>):Void {
+        if (current.length == size) {
+            result.push(current.copy());
+            return;
+        }
+
+        var remaining = size - current.length;
+        var lastStart = items.length - remaining;
+        for (i in start...lastStart + 1) {
+            current.push(items[i]);
+            collect(items, size, i + 1, current, result);
+            current.pop();
+        }
     }
 }

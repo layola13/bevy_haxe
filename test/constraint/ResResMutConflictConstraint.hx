@@ -6,6 +6,10 @@ import bevy.ecs.ResMut;
 import bevy.ecs.Resource;
 
 class ResResMutConflictConstraint implements SystemClass {
+    public static function main():Void {
+        ConstraintRuntime.runUpdate("ResResMutConflictConstraint");
+    }
+
     @:system("Update")
     public static function illegal(shared:Res<ConstraintCounter>, mutable:ResMut<ConstraintCounter>):Void {
         shared.value.value;
@@ -14,7 +18,9 @@ class ResResMutConflictConstraint implements SystemClass {
 }
 
 class ConstraintCounter implements Resource {
-    public var value:Int = 0;
+    public var value:Int;
 
-    public function new() {}
+    public function new(?value:Int) {
+        this.value = value != null ? value : 0;
+    }
 }

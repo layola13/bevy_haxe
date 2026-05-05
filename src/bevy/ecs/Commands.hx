@@ -19,8 +19,9 @@ class Commands {
     public function spawn(?bundle:Array<Dynamic>):Entity {
         var entity = world.reserveEntity();
         var deferredBundle = bundle != null ? bundle.copy() : null;
+        var spawnedBy = World.captureSpawnedBy();
         queue.push(function(world) {
-            world.spawnReserved(entity, deferredBundle);
+            world.spawnReserved(entity, deferredBundle, spawnedBy);
         });
         return entity;
     }
@@ -39,12 +40,13 @@ class Commands {
             return result;
         }
         var reserved = world.reserveEntities(bundles.length);
+        var spawnedBy = World.captureSpawnedBy();
         for (i in 0...bundles.length) {
             var entity = reserved[i];
             var deferredBundle = bundles[i];
             result.push(entity);
             queue.push(function(world) {
-                world.spawnReserved(entity, deferredBundle.toBundle());
+                world.spawnReserved(entity, deferredBundle.toBundle(), spawnedBy);
             });
         }
         return result;

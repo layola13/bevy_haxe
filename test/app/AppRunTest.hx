@@ -349,15 +349,19 @@ class RunTrace implements Resource {
 }
 
 class StartupCounter implements Resource {
-    public var value:Int = 0;
+    public var value:Int;
 
-    public function new() {}
+    public function new(?value:Int) {
+        this.value = value != null ? value : 0;
+    }
 }
 
 class RunnerCounter implements Resource {
-    public var value:Int = 0;
+    public var value:Int;
 
-    public function new() {}
+    public function new(?value:Int) {
+        this.value = value != null ? value : 0;
+    }
 }
 
 class RunEvent {
@@ -371,8 +375,11 @@ class RunEvent {
 class LifecyclePlugin implements bevy.app.Plugin {
     public var finishCalled:Bool = false;
     public var cleanupCalled:Bool = false;
+    public var marker(default, null):String;
 
-    public function new() {}
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "lifecycle";
+    }
 
     public function build(app:App):Void {}
 
@@ -404,7 +411,11 @@ class AppInitResource implements Resource {
 }
 
 class OrderedPlugins implements bevy.app.PluginGroup {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "ordered";
+    }
 
     public function build():bevy.app.PluginGroup.PluginGroupBuilder {
         return bevy.app.PluginGroup.PluginGroupBuilder.start(OrderedPlugins)
@@ -416,7 +427,11 @@ class OrderedPlugins implements bevy.app.PluginGroup {
 }
 
 class AlphaPlugin implements bevy.app.Plugin {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "alpha";
+    }
 
     public function build(app:App):Void {
         app.world.getResource(RunTrace).push("alpha");
@@ -424,7 +439,11 @@ class AlphaPlugin implements bevy.app.Plugin {
 }
 
 class BetaPlugin implements bevy.app.Plugin {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "beta";
+    }
 
     public function build(app:App):Void {
         app.world.getResource(RunTrace).push("beta");
@@ -432,7 +451,11 @@ class BetaPlugin implements bevy.app.Plugin {
 }
 
 class GammaPlugin implements bevy.app.Plugin {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "gamma";
+    }
 
     public function build(app:App):Void {
         app.world.getResource(RunTrace).push("gamma");
@@ -440,7 +463,11 @@ class GammaPlugin implements bevy.app.Plugin {
 }
 
 class DeltaPlugin implements bevy.app.Plugin {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "delta";
+    }
 
     public function build(app:App):Void {
         app.world.getResource(RunTrace).push("delta");

@@ -25,10 +25,14 @@ class Entity {
 class EntityLocation {
     public var generation:Int;
     public var alive:Bool;
+    public var spawnTick:Int;
+    public var spawnedBy:Null<String>;
 
-    public function new(generation:Int, alive:Bool) {
+    public function new(generation:Int, alive:Bool, ?spawnTick:Int, ?spawnedBy:String) {
         this.generation = generation;
         this.alive = alive;
+        this.spawnTick = spawnTick != null ? spawnTick : 0;
+        this.spawnedBy = spawnedBy;
     }
 }
 

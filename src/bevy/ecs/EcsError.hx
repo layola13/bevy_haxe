@@ -154,6 +154,19 @@ class QueryDoesNotMatchError extends QueryEntityError {
     }
 }
 
+class DuplicateEntityError extends EcsError {
+    public var entity(default, null):Entity;
+    public var firstIndex(default, null):Int;
+    public var duplicateIndex(default, null):Int;
+
+    public function new(entity:Entity, firstIndex:Int, duplicateIndex:Int) {
+        this.entity = entity;
+        this.firstIndex = firstIndex;
+        this.duplicateIndex = duplicateIndex;
+        super('Duplicate entity $entity at indices $firstIndex and $duplicateIndex');
+    }
+}
+
 class QuerySingleError extends EcsError {
     public var queryLabel(default, null):String;
     public var kind(default, null):QuerySingleKind;

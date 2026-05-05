@@ -6,6 +6,10 @@ import bevy.ecs.Resource;
 import bevy.ecs.World;
 
 class WorldMixedParamConstraint implements SystemClass {
+    public static function main():Void {
+        ConstraintRuntime.runUpdate("WorldMixedParamConstraint");
+    }
+
     @:system("Update")
     public static function illegal(world:World, counter:Res<WorldMixedCounter>):Void {
         world.entityCount();
@@ -14,7 +18,9 @@ class WorldMixedParamConstraint implements SystemClass {
 }
 
 class WorldMixedCounter implements Resource {
-    public var value:Int = 0;
+    public var value(default, null):Int;
 
-    public function new() {}
+    public function new(?value:Int) {
+        this.value = value != null ? value : 0;
+    }
 }

@@ -48,6 +48,8 @@ class World {
             var location = entities[index];
             generation = location.generation;
             location.alive = false;
+            location.spawnTick = 0;
+            location.spawnedBy = null;
         } else {
             index = entities.length;
             generation = 1;
@@ -71,7 +73,7 @@ class World {
         return spawnReserved(reserveEntity(), bundle);
     }
 
-    public function spawnReserved(entity:Entity, ?bundle:Array<Dynamic>):Entity {
+    public function spawnReserved(entity:Entity, ?bundle:Array<Dynamic>, ?spawnedBy:String):Entity {
         var location = entityLocation(entity);
         if (location == null || location.generation != entity.generation) {
             throw new SpawnError(entity, SpawnErrorKind.Invalid(currentGenerationForEntity(entity)));
@@ -81,6 +83,8 @@ class World {
         }
 
         location.alive = true;
+        location.spawnTick = changeTick;
+        location.spawnedBy = spawnedBy != null ? spawnedBy : captureSpawnedBy();
         var storage = components.get(entity.index);
         if (storage == null) {
             storage = new Map();
@@ -123,6 +127,8 @@ class World {
             components.remove(entity.index);
         }
         location.alive = false;
+        location.spawnTick = 0;
+        location.spawnedBy = null;
         location.generation++;
         freeIndices.push(entity.index);
         return true;
@@ -221,117 +227,150 @@ class World {
     }
 
     public function query<T>(cls:Class<T>, ?componentKey:String):Query<T> {
-        var entityData = Type.getClassName(cast cls) == Type.getClassName(Entity);
-        return new Query<T>(this, cls, entityData && componentKey == null ? null : componentLookupKey(cls, componentKey));
+        return new Query<T>(this, cls, queryDataLookupKey(cls, componentKey));
     }
 
-    public function queryFiltered<T>(cls:Class<T>, filters:Array<bevy.ecs.QueryFilter>, ?componentKey:String):Query<T> {
-        return query(cls, componentKey).filterAll(filters);
+    public function queryFiltered<T>(cls:Class<T>, filters:Array<bevy.ecs.QueryFilter>, ?componentKey:String, lastRunTick:Int = 0):Query<T> {
+        return new Query<T>(this, cls, queryDataLookupKey(cls, componentKey), lastRunTick).filterAll(filters);
     }
 
-    public function queryPair<A, B>(a:Class<A>, b:Class<B>, ?aKey:String, ?bKey:String):Query2<A, B> {
-        return new Query2<A, B>(this, a, b, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey));
+    public function queryPair<A, B>(a:Class<A>, b:Class<B>, ?aKey:String, ?bKey:String, lastRunTick:Int = 0):Query2<A, B> {
+        return new Query2<A, B>(this, a, b, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey), lastRunTick);
     }
 
-    public function queryFilteredPair<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String):Query2<A, B> {
-        return queryPair(a, b, aKey, bKey).filterAll(filters);
+    public function queryFilteredPair<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, lastRunTick:Int = 0):Query2<A, B> {
+        return queryPair(a, b, aKey, bKey, lastRunTick).filterAll(filters);
     }
 
-    public function queryTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, ?aKey:String, ?bKey:String, ?cKey:String):Query3<A, B, C> {
-        return new Query3<A, B, C>(this, a, b, c, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey), queryDataLookupKey(c, cKey));
+    public function queryTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, ?aKey:String, ?bKey:String, ?cKey:String, lastRunTick:Int = 0):Query3<A, B, C> {
+        return new Query3<A, B, C>(this, a, b, c, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey), queryDataLookupKey(c, cKey), lastRunTick);
     }
 
-    public function queryFilteredTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String):Query3<A, B, C> {
-        return queryTriple(a, b, c, aKey, bKey, cKey).filterAll(filters);
+    public function queryFilteredTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String, lastRunTick:Int = 0):Query3<A, B, C> {
+        return queryTriple(a, b, c, aKey, bKey, cKey, lastRunTick).filterAll(filters);
     }
 
-    public function queryOne<T>(cls:Class<T>, filters:Array<bevy.ecs.QueryFilter>, ?componentKey:String):Array<QueryItem<T>> {
+    public function queryOne<T>(cls:Class<T>, filters:Array<bevy.ecs.QueryFilter>, ?componentKey:String, lastRunTick:Int = 0):Array<QueryItem<T>> {
         var result:Array<QueryItem<T>> = [];
-        var entityData = Type.getClassName(cast cls) == Type.getClassName(Entity);
-        var typeKey = entityData ? null : componentLookupKey(cls, componentKey);
+        var entityData = isEntityClass(cls);
+        var spawnDetailsData = isSpawnDetailsClass(cls);
+        var hasData = isHasClass(cls);
+        var optionData = isOptionClass(cls);
+        var syntheticData = entityData || spawnDetailsData || hasData || optionData;
+        var typeKey = syntheticData ? componentKey : componentLookupKey(cls, componentKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
             if (entity == null || !matchesFilters(entity, storage, filters)) {
                 continue;
             }
-            if (!entityData && !storage.exists(typeKey)) {
+            if (!syntheticData && !storage.exists(typeKey)) {
                 continue;
             }
             result.push({
                 entity: entity,
-                component: entityData ? cast entity : cast storage.get(typeKey)
+                component: entityData ? cast entity : spawnDetailsData ? cast spawnDetails(entity, lastRunTick) : hasData ? cast hasQueryData(storage, typeKey) : optionData ? cast optionQueryData(storage, typeKey) : cast storage.get(typeKey)
             });
         }
         return result;
     }
 
-    public function queryTwo<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String):Array<QueryItem2<A, B>> {
+    public function queryTwo<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, lastRunTick:Int = 0):Array<QueryItem2<A, B>> {
         var result:Array<QueryItem2<A, B>> = [];
         var aEntityData = isEntityClass(a);
         var bEntityData = isEntityClass(b);
-        var resolvedAKey = aEntityData ? null : componentLookupKey(a, aKey);
-        var resolvedBKey = bEntityData ? null : componentLookupKey(b, bKey);
+        var aSpawnDetailsData = isSpawnDetailsClass(a);
+        var bSpawnDetailsData = isSpawnDetailsClass(b);
+        var aHasData = isHasClass(a);
+        var bHasData = isHasClass(b);
+        var aOptionData = isOptionClass(a);
+        var bOptionData = isOptionClass(b);
+        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData;
+        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData;
+        var resolvedAKey = aSyntheticData ? aKey : componentLookupKey(a, aKey);
+        var resolvedBKey = bSyntheticData ? bKey : componentLookupKey(b, bKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
             if (entity == null || !matchesFilters(entity, storage, filters)) {
                 continue;
             }
-            if ((!aEntityData && !storage.exists(resolvedAKey)) || (!bEntityData && !storage.exists(resolvedBKey))) {
+            if ((!aSyntheticData && !storage.exists(resolvedAKey)) || (!bSyntheticData && !storage.exists(resolvedBKey))) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : cast storage.get(resolvedBKey)
+                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : cast storage.get(resolvedBKey)
             });
         }
         return result;
     }
 
-    public function queryThree<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String):Array<QueryItem3<A, B, C>> {
+    public function queryThree<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String, lastRunTick:Int = 0):Array<QueryItem3<A, B, C>> {
         var result:Array<QueryItem3<A, B, C>> = [];
         var aEntityData = isEntityClass(a);
         var bEntityData = isEntityClass(b);
         var cEntityData = isEntityClass(c);
-        var resolvedAKey = aEntityData ? null : componentLookupKey(a, aKey);
-        var resolvedBKey = bEntityData ? null : componentLookupKey(b, bKey);
-        var resolvedCKey = cEntityData ? null : componentLookupKey(c, cKey);
+        var aSpawnDetailsData = isSpawnDetailsClass(a);
+        var bSpawnDetailsData = isSpawnDetailsClass(b);
+        var cSpawnDetailsData = isSpawnDetailsClass(c);
+        var aHasData = isHasClass(a);
+        var bHasData = isHasClass(b);
+        var cHasData = isHasClass(c);
+        var aOptionData = isOptionClass(a);
+        var bOptionData = isOptionClass(b);
+        var cOptionData = isOptionClass(c);
+        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData;
+        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData;
+        var cSyntheticData = cEntityData || cSpawnDetailsData || cHasData || cOptionData;
+        var resolvedAKey = aSyntheticData ? aKey : componentLookupKey(a, aKey);
+        var resolvedBKey = bSyntheticData ? bKey : componentLookupKey(b, bKey);
+        var resolvedCKey = cSyntheticData ? cKey : componentLookupKey(c, cKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
             if (entity == null
                 || !matchesFilters(entity, storage, filters)) {
                 continue;
             }
-            if ((!aEntityData && !storage.exists(resolvedAKey))
-                || (!bEntityData && !storage.exists(resolvedBKey))
-                || (!cEntityData && !storage.exists(resolvedCKey))) {
+            if ((!aSyntheticData && !storage.exists(resolvedAKey))
+                || (!bSyntheticData && !storage.exists(resolvedBKey))
+                || (!cSyntheticData && !storage.exists(resolvedCKey))) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : cast storage.get(resolvedBKey),
-                c: cEntityData ? cast entity : cast storage.get(resolvedCKey)
+                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : cast storage.get(resolvedBKey),
+                c: cEntityData ? cast entity : cSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : cHasData ? cast hasQueryData(storage, resolvedCKey) : cOptionData ? cast optionQueryData(storage, resolvedCKey) : cast storage.get(resolvedCKey)
             });
         }
         return result;
     }
 
     @:allow(bevy.ecs.Query)
-    private function queryTuple(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>):Array<{entity:Entity, components:Array<Any>}> {
+    private function queryTuple(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>, lastRunTick:Int = 0):Array<{entity:Entity, components:Array<Any>}> {
         var result:Array<{entity:Entity, components:Array<Any>}> = [];
         if (items == null || items.length == 0) {
             return result;
         }
 
-        var entityData:Array<Bool> = [];
+        var syntheticData:Array<Bool> = [];
+        var spawnDetailsData:Array<Bool> = [];
+        var hasData:Array<Bool> = [];
+        var optionData:Array<Bool> = [];
         var resolvedKeys:Array<Null<String>> = [];
         for (i in 0...items.length) {
             var cls = items[i];
-            var isEntityData = isEntityClass(cast cls);
-            entityData.push(isEntityData);
-            if (isEntityData) {
-                resolvedKeys.push(null);
+            var isSyntheticData = isSyntheticQueryDataClass(cast cls);
+            var isSpawnDetailsData = isSpawnDetailsClass(cast cls);
+            var isHasData = isHasClass(cast cls);
+            var isOptionData = isOptionClass(cast cls);
+            syntheticData.push(isSyntheticData);
+            spawnDetailsData.push(isSpawnDetailsData);
+            hasData.push(isHasData);
+            optionData.push(isOptionData);
+            if (isSyntheticData) {
+                var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
+                resolvedKeys.push(isHasData || isOptionData ? explicitKey : null);
                 continue;
             }
             var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
@@ -347,8 +386,8 @@ class World {
             var values:Array<Any> = [];
             var matched = true;
             for (i in 0...items.length) {
-                if (entityData[i]) {
-                    values.push(entity);
+                if (syntheticData[i]) {
+                    values.push(spawnDetailsData[i] ? spawnDetails(entity, lastRunTick) : hasData[i] ? hasQueryData(storage, resolvedKeys[i]) : optionData[i] ? optionQueryData(storage, resolvedKeys[i]) : entity);
                     continue;
                 }
 
@@ -358,6 +397,48 @@ class World {
                     break;
                 }
                 values.push(storage.get(key));
+            }
+
+            if (!matched) {
+                continue;
+            }
+
+            result.push({
+                entity: entity,
+                components: values
+            });
+        }
+
+        return result;
+    }
+
+    @:allow(bevy.ecs.Query)
+    private function queryAnyOf(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>):Array<{entity:Entity, components:Array<Any>}> {
+        var result:Array<{entity:Entity, components:Array<Any>}> = [];
+        if (items == null || items.length == 0) {
+            return result;
+        }
+
+        var resolvedKeys:Array<String> = [];
+        for (i in 0...items.length) {
+            var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
+            resolvedKeys.push(componentLookupKey(cast items[i], explicitKey));
+        }
+
+        for (index => storage in components) {
+            var entity = entityForIndex(index);
+            if (entity == null || !matchesFilters(entity, storage, filters)) {
+                continue;
+            }
+
+            var values:Array<Any> = [];
+            var matched = false;
+            for (key in resolvedKeys) {
+                var present = storage.exists(key);
+                if (present) {
+                    matched = true;
+                }
+                values.push(new Option<Any>(present ? cast storage.get(key) : null));
             }
 
             if (!matched) {
@@ -579,6 +660,8 @@ class World {
                         storage.exists(spec.typeKey) && isAddedByKey(entity, spec.typeKey, sinceTick);
                     case ChangedSince(sinceTick):
                         storage.exists(spec.typeKey) && isChangedByKey(entity, spec.typeKey, sinceTick);
+                    case SpawnedSince(sinceTick):
+                        isSpawnedSince(entity, sinceTick);
                 }
             case AllOf(children):
                 var matched = true;
@@ -636,6 +719,47 @@ class World {
         return value != null && value > sinceTick;
     }
 
+    private function isSpawnedSince(entity:Entity, sinceTick:Int):Bool {
+        var location = entityLocation(entity);
+        return location != null
+            && location.alive
+            && location.generation == entity.generation
+            && location.spawnTick > sinceTick;
+    }
+
+    @:allow(bevy.ecs.Query)
+    private function spawnDetails(entity:Entity, lastRunTick:Int):Null<SpawnDetails> {
+        var location = entityLocation(entity);
+        if (location == null || !location.alive || location.generation != entity.generation) {
+            return null;
+        }
+        return new SpawnDetails(location.spawnTick, lastRunTick, changeTick, location.spawnedBy);
+    }
+
+    private function hasQueryData(storage:Map<String, Dynamic>, typeKey:Null<String>):Has<Any> {
+        return new Has<Any>(typeKey != null && storage.exists(typeKey));
+    }
+
+    private function optionQueryData(storage:Map<String, Dynamic>, typeKey:Null<String>):Option<Any> {
+        return new Option<Any>(typeKey != null && storage.exists(typeKey) ? cast storage.get(typeKey) : null);
+    }
+
+    @:allow(bevy.ecs.Commands)
+    private static function captureSpawnedBy():String {
+        var stack = haxe.CallStack.callStack();
+        for (item in stack) {
+            var value = Std.string(item);
+            if (value.indexOf("captureSpawnedBy") >= 0
+                || value.indexOf("bevy.ecs.World.spawn") >= 0
+                || value.indexOf("bevy.ecs.Commands.spawn") >= 0
+                || value.indexOf("bevy.ecs.Commands.apply") >= 0) {
+                continue;
+            }
+            return value;
+        }
+        return Std.string(stack);
+    }
+
     private function createResource<T>(cls:Class<T>):T {
         var fromWorld = Reflect.field(cls, "fromWorld");
         if (fromWorld != null) {
@@ -658,11 +782,36 @@ class World {
     }
 
     private function queryDataLookupKey<T>(cls:Class<T>, typeKey:Null<String>):Null<String> {
-        return isEntityClass(cls) && (typeKey == null || typeKey == "") ? null : componentLookupKey(cls, typeKey);
+        if (isEntityClass(cls) || isSpawnDetailsClass(cls)) {
+            return typeKey == null || typeKey == "" ? null : componentLookupKey(cls, typeKey);
+        }
+        if (isHasClass(cls)) {
+            return typeKey == null || typeKey == "" ? null : TypeKey.named(typeKey);
+        }
+        if (isOptionClass(cls)) {
+            return typeKey == null || typeKey == "" ? null : TypeKey.named(typeKey);
+        }
+        return componentLookupKey(cls, typeKey);
     }
 
     private function isEntityClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
+    }
+
+    private function isSpawnDetailsClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
+    }
+
+    private function isHasClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Has);
+    }
+
+    private function isOptionClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Option);
+    }
+
+    private function isSyntheticQueryDataClass<T>(cls:Class<T>):Bool {
+        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls);
     }
 
     private function componentStorageKey(component:Dynamic):String {

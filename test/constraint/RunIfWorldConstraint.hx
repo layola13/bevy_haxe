@@ -4,6 +4,10 @@ import bevy.app.SystemClass;
 import bevy.ecs.World;
 
 class RunIfWorldConstraint implements SystemClass {
+    public static function main():Void {
+        ConstraintRuntime.runUpdate("RunIfWorldConstraint");
+    }
+
     @:system("Update")
     @:runIf("constraint.RunIfWorldConditions.illegal")
     public static function system():Void {}

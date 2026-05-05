@@ -1,49 +1,39 @@
 package bevy.ecs;
 
 @:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple<Rest> {}
+class Tuple<Rest> {
+    @:noCompletion
+    private function new() {
+        throw "Tuple is a generic-build anchor and should resolve to a generated tuple data class";
+    }
+}
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple1<Rest> {}
+typedef Tuple1<T0> = Tuple<T0>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple2<Rest> {}
+typedef Tuple2<T0, T1> = Tuple<T0, T1>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple3<Rest> {}
+typedef Tuple3<T0, T1, T2> = Tuple<T0, T1, T2>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple4<Rest> {}
+typedef Tuple4<T0, T1, T2, T3> = Tuple<T0, T1, T2, T3>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple5<Rest> {}
+typedef Tuple5<T0, T1, T2, T3, T4> = Tuple<T0, T1, T2, T3, T4>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple6<Rest> {}
+typedef Tuple6<T0, T1, T2, T3, T4, T5> = Tuple<T0, T1, T2, T3, T4, T5>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple7<Rest> {}
+typedef Tuple7<T0, T1, T2, T3, T4, T5, T6> = Tuple<T0, T1, T2, T3, T4, T5, T6>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple8<Rest> {}
+typedef Tuple8<T0, T1, T2, T3, T4, T5, T6, T7> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple9<Rest> {}
+typedef Tuple9<T0, T1, T2, T3, T4, T5, T6, T7, T8> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple10<Rest> {}
+typedef Tuple10<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple11<Rest> {}
+typedef Tuple11<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple12<Rest> {}
+typedef Tuple12<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple13<Rest> {}
+typedef Tuple13<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple14<Rest> {}
+typedef Tuple14<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>;
 
-@:genericBuild(bevy.macro.TupleMacro.buildTuple())
-class Tuple15<Rest> {}
+typedef Tuple15<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> = Tuple<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>;

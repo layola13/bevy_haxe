@@ -9,6 +9,7 @@ import bevy.ecs.Component;
 import bevy.ecs.EcsError.EntityDoesNotExistError;
 import bevy.ecs.EcsError.EntityNotSpawnedError;
 import bevy.ecs.EcsError.EntityNotSpawnedKind;
+import bevy.ecs.EcsError.DuplicateEntityError;
 import bevy.ecs.EcsError.InvalidEntityError;
 import bevy.ecs.Entity;
 import bevy.ecs.Event;
@@ -27,11 +28,16 @@ import bevy.ecs.EcsError.SpawnErrorKind;
 import bevy.ecs.EcsError.TypeKeyError;
 import bevy.ecs.EcsError.TypeKeyErrorKind;
 import bevy.ecs.Resource;
+import bevy.ecs.UniqueEntityArray;
 import bevy.ecs.World;
 import bevy.ecs.With;
 import bevy.ecs.Without;
 import bevy.ecs.Added;
 import bevy.ecs.Changed;
+import bevy.ecs.Spawned;
+import bevy.ecs.SpawnDetails;
+import bevy.ecs.Has;
+import bevy.ecs.Option;
 import bevy.ecs.All;
 import bevy.ecs.Or;
 import bevy.asset.Asset;
@@ -54,6 +60,10 @@ class EcsCoreTest {
         testChangeTicks();
         testGenericHandleComponents();
         testDedicatedQueryFilters();
+        testSpawnedQueryFilter();
+        testSpawnDetailsQueryData();
+        testHasQueryData();
+        testOptionQueryData();
         testFilteredPairQueries();
         testTripleQueries();
         testEntityMixedQueries();
@@ -62,6 +72,8 @@ class EcsCoreTest {
         testQueryEntityAccess();
         testEntityWorldAccess();
         testQueryCountAndStrictGetMany();
+        testQueryUniqueEntityAccess();
+        testQueryIterCombinations();
         testCommandEntityAccess();
         testCommandGetEntitySemantics();
         testDeferredSpawnSemantics();
@@ -231,6 +243,124 @@ class EcsCoreTest {
         assertEq(2, playerOrChanged.length, "Or filter should compose change and presence filters");
     }
 
+    static function testSpawnedQueryFilter():Void {
+        var world = new World();
+        var initial = world.spawn([new Position(1, 1), new PlayerTag()]);
+
+        var firstSeen = world.queryFiltered(Position, [Spawned.of(0)]).toArray();
+        assertEq(1, firstSeen.length, "Spawned filter should include entities spawned before first query run");
+        assertEq(initial.index, firstSeen[0].entity.index, "Spawned filter should keep the initially spawned entity");
+
+        world.advanceTick();
+        var afterInitialSince = world.tick() - 1;
+        assertEq(0, world.queryFiltered(Position, [Spawned.of(afterInitialSince)]).count(), "Spawned filter should stop matching old spawns after the caller advances its last-run tick");
+
+        var commands = world.commands();
+        var deferred = commands.spawn([new Position(2, 2)]);
+        assert(world.containsEntity(deferred), "deferred spawned entity id should be reserved before apply");
+        assert(!world.isAlive(deferred), "deferred spawned entity should not be alive before command apply");
+        assertEq(0, world.queryFiltered(Position, [Spawned.of(afterInitialSince)]).count(), "Spawned filter should not see deferred command spawns before apply");
+
+        commands.apply();
+        var afterApply = world.queryFiltered(Position, [Spawned.of(afterInitialSince)]).toArray();
+        assertEq(1, afterApply.length, "Spawned filter should see command spawns after deferred apply");
+        assertEq(deferred.index, afterApply[0].entity.index, "Spawned filter should keep the newly materialized command entity");
+    }
+
+    static function testSpawnDetailsQueryData():Void {
+        var world = new World();
+        var initial = world.spawn([new Position(1, 1)]);
+
+        var direct = world.query(SpawnDetails).single();
+        assert(direct.component.isSpawned(), "SpawnDetails should report first-run spawned state for direct query data");
+        assertEq(world.tick(), direct.component.spawnTick(), "SpawnDetails should expose the entity spawn tick");
+        assert(direct.component.spawnedBy() != null && direct.component.spawnedBy().length > 0, "SpawnDetails should expose a non-empty spawn source");
+
+        var pair = world.queryPair(Entity, SpawnDetails).single();
+        assertEq(initial.index, pair.a.index, "Query2<Entity, SpawnDetails> should keep Entity query data");
+        assert(pair.b.isSpawnedAfter(0), "SpawnDetails.isSpawnedAfter should compare against an explicit tick");
+
+        world.advanceTick();
+        var afterInitialSince = world.tick() - 1;
+        var staleDetails = world.queryPair(Entity, SpawnDetails, null, null, afterInitialSince).single();
+        assert(!staleDetails.b.isSpawned(), "SpawnDetails should stop reporting old spawns after last-run advances");
+
+        var commands = world.commands();
+        var deferred = commands.spawn([new Position(2, 2)]);
+        commands.apply();
+
+        var deferredDetails = world.queryPair(Entity, SpawnDetails, null, null, afterInitialSince).get(deferred);
+        assert(deferredDetails != null, "Query2<Entity, SpawnDetails>.get should resolve a newly applied command spawn");
+        assert(deferredDetails.b.isSpawned(), "SpawnDetails should report command-spawned entities after deferred apply");
+        assert(deferredDetails.b.spawnedBy() != null && deferredDetails.b.spawnedBy().length > 0, "SpawnDetails should preserve command spawn source captured at queue time");
+        assertEq(deferred.index, deferredDetails.a.index, "SpawnDetails query should preserve the requested entity");
+    }
+
+    static function testHasQueryData():Void {
+        var world = new World();
+        var player = world.spawn([new Position(1, 1), new PlayerTag("tracked")]);
+        var untagged = world.spawn([new Position(2, 2)]);
+        var tagOnly = world.spawn([new PlayerTag("only-tag")]);
+
+        var hasPlayerTag = world.query(Has, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(3, hasPlayerTag.count(), "Query<Has<T>> should match all spawned entities, not only entities with T");
+        assert(hasPlayerTag.get(player).component.value, "Query<Has<T>> should report true when the entity has T");
+        assert(!hasPlayerTag.get(untagged).component.value, "Query<Has<T>> should report false when the entity lacks T");
+        assert(hasPlayerTag.get(tagOnly).component.isPresent(), "Has<T>.isPresent should mirror the stored presence bit");
+
+        var positioned = world.queryPair(Position, Has, null, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(2, positioned.count(), "Query2<Component, Has<T>> should still be constrained by real component data");
+        assert(positioned.get(player).b.value, "Query2<Component, Has<T>> should return true for matching component presence");
+        assert(!positioned.get(untagged).b.value, "Query2<Component, Has<T>>.get should not reject absent T");
+
+        var triple = world.queryTriple(Entity, Position, Has, null, null, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(2, triple.count(), "Query3<Entity, Component, Has<T>> should support Has<T> in synthetic data slots");
+        assertEq(player.index, triple.get(player).a.index, "Query3<Entity, Component, Has<T>> should preserve Entity query data");
+        assert(!triple.get(untagged).c.value, "Query3<Entity, Component, Has<T>> should preserve false Has<T> values");
+
+        var handleAKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast TestAssetA]);
+        var handleBKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast TestAssetB]);
+        var bothHandles = world.spawn([new Position(3, 3), new Handle<TestAssetA>(10, handleAKey), new Handle<TestAssetB>(20, handleBKey)]);
+        var onlyHandleA = world.spawn([new Position(4, 4), new Handle<TestAssetA>(11, handleAKey)]);
+        var handlePresence = world.queryPair(Handle, Has, handleAKey, handleBKey);
+        assertEq(2, handlePresence.count(), "Query2<Handle<A>, Has<Handle<B>>> should use parameterized component keys");
+        assert(handlePresence.get(bothHandles).b.value, "Has<Handle<B>> should report true for the entity carrying the parameterized B handle");
+        assert(!handlePresence.get(onlyHandleA).b.value, "Has<Handle<B>> should report false for an entity carrying only Handle<A>");
+    }
+
+    static function testOptionQueryData():Void {
+        var world = new World();
+        var player = world.spawn([new Position(1, 1), new PlayerTag("optional")]);
+        var untagged = world.spawn([new Position(2, 2)]);
+        var velocityOnly = world.spawn([new Velocity(3, 3)]);
+
+        var optionalPlayerTag = world.query(Option, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(3, optionalPlayerTag.count(), "Query<Option<T>> should match all spawned entities, not only entities with T");
+        assert(optionalPlayerTag.get(player).component.isSome(), "Query<Option<T>> should return Some when T is present");
+        assertEq("optional", optionalPlayerTag.get(player).component.value.marker, "Query<Option<T>> should preserve the component value");
+        assert(optionalPlayerTag.get(untagged).component.isNone(), "Query<Option<T>> should return None when T is absent");
+        assert(optionalPlayerTag.get(velocityOnly).component.unwrapOrNull() == null, "Option<T>.unwrapOrNull should expose null for None");
+
+        var positioned = world.queryPair(Position, Option, null, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(2, positioned.count(), "Query2<Component, Option<T>> should still be constrained by real component data");
+        assert(positioned.get(player).b.isSome(), "Query2<Component, Option<T>> should return Some for matching component presence");
+        assert(positioned.get(untagged).b.isNone(), "Query2<Component, Option<T>>.get should not reject absent T");
+
+        var triple = world.queryTriple(Entity, Position, Option, null, null, bevy.ecs.TypeKey.ofClass(PlayerTag));
+        assertEq(2, triple.count(), "Query3<Entity, Component, Option<T>> should support Option<T> in synthetic data slots");
+        assertEq(player.index, triple.get(player).a.index, "Query3<Entity, Component, Option<T>> should preserve Entity query data");
+        assert(triple.get(untagged).c.isNone(), "Query3<Entity, Component, Option<T>> should preserve None values");
+
+        var handleAKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast TestAssetA]);
+        var handleBKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast TestAssetB]);
+        var bothHandles = world.spawn([new Handle<TestAssetA>(30, handleAKey), new Handle<TestAssetB>(40, handleBKey)]);
+        var onlyHandleA = world.spawn([new Handle<TestAssetA>(31, handleAKey)]);
+        var handlePresence = world.queryPair(Handle, Option, handleAKey, handleBKey);
+        assertEq(2, handlePresence.count(), "Query2<Handle<A>, Option<Handle<B>>> should use parameterized component keys");
+        assertEq(40, handlePresence.get(bothHandles).b.value.id, "Option<Handle<B>> should return the parameterized B handle when present");
+        assert(handlePresence.get(onlyHandleA).b.isNone(), "Option<Handle<B>> should return None for an entity carrying only Handle<A>");
+    }
+
     static function testFilteredPairQueries():Void {
         var world = new World();
         var player = world.spawn([new Position(1, 1), new Velocity(2, 2), new PlayerTag()]);
@@ -357,6 +487,76 @@ class EcsCoreTest {
         assert(threw, "getMany should fail when any entity does not satisfy the query");
     }
 
+    static function testQueryUniqueEntityAccess():Void {
+        var world = new World();
+        var first = world.spawn([new Position(1, 1), new Velocity(10, 10)]);
+        var second = world.spawn([new Position(2, 2), new Velocity(20, 20)]);
+        var other = world.spawn([new Velocity(30, 30)]);
+
+        var unique = UniqueEntityArray.from([second, first]);
+        var query = world.query(Position);
+        var items = query.getManyUnique(unique);
+        assertEq(2, items.length, "Query.getManyUnique should return all unique matching entities");
+        assertEq(second.index, items[0].entity.index, "Query.getManyUnique should preserve input order");
+        assertEq(first.index, items[1].entity.index, "Query.getManyUnique should preserve second input order");
+
+        var iterItems = query.iterManyUnique(UniqueEntityArray.from([other, first, second]));
+        assertEq(2, iterItems.length, "Query.iterManyUnique should skip non-matching unique entities");
+
+        var pairItems = world.queryPair(Position, Velocity).getManyUnique(UniqueEntityArray.from([first, second]));
+        assertEq(2, pairItems.length, "Query2.getManyUnique should support unique entity arrays");
+        assertEq(20, pairItems[1].b.x, "Query2.getManyUnique should preserve tuple data");
+
+        var tripleItems = world.queryTriple(Entity, Position, Velocity).getManyUnique(UniqueEntityArray.from([second, first]));
+        assertEq(2, tripleItems.length, "Query3.getManyUnique should support mixed entity/component data");
+        assertEq(second.index, tripleItems[0].a.index, "Query3.getManyUnique should keep Entity query data");
+
+        var duplicateError:DuplicateEntityError = null;
+        try {
+            UniqueEntityArray.from([first, second, first]);
+        } catch (error:DuplicateEntityError) {
+            duplicateError = error;
+        }
+        assert(duplicateError != null, "UniqueEntityArray should reject duplicate entities");
+        assertEq(first.index, duplicateError.entity.index, "DuplicateEntityError should keep duplicate entity");
+        assertEq(0, duplicateError.firstIndex, "DuplicateEntityError should keep first index");
+        assertEq(2, duplicateError.duplicateIndex, "DuplicateEntityError should keep duplicate index");
+    }
+
+    static function testQueryIterCombinations():Void {
+        var world = new World();
+        var first = world.spawn([new Position(1, 1), new Velocity(10, 10)]);
+        var second = world.spawn([new Position(2, 2), new Velocity(20, 20)]);
+        var third = world.spawn([new Position(3, 3), new Velocity(30, 30)]);
+        world.spawn([new Velocity(40, 40)]);
+
+        var pairs = world.query(Position).iterCombinations(2);
+        assertEq(3, pairs.length, "Query.iterCombinations(2) should return n choose 2 matching pairs");
+        var pairKeys:Map<String, Bool> = new Map();
+        for (pair in pairs) {
+            assert(pair[0].entity.index != pair[1].entity.index, "Query.iterCombinations pairs must not repeat an entity");
+            pairKeys.set(combinationKey([pair[0].entity, pair[1].entity]), true);
+        }
+        assert(pairKeys.exists(combinationKey([first, second])), "Query.iterCombinations should include first/second pair");
+        assert(pairKeys.exists(combinationKey([first, third])), "Query.iterCombinations should include first/third pair");
+        assert(pairKeys.exists(combinationKey([second, third])), "Query.iterCombinations should include second/third pair");
+
+        var triples = world.query(Position).iterCombinations(3);
+        assertEq(1, triples.length, "Query.iterCombinations(3) should return one triple for three matching entities");
+        assertEq(combinationKey([first, second, third]), combinationKey([for (item in triples[0]) item.entity]), "Query.iterCombinations(3) should include all matching entities once");
+        assertEq(0, world.query(Position).iterCombinations(4).length, "Query.iterCombinations should be empty when K exceeds match count");
+
+        var query2Pairs = world.queryPair(Position, Velocity).iterCombinations(2);
+        assertEq(3, query2Pairs.length, "Query2.iterCombinations should work on multi-component query data");
+        var velocityPairTotals = [for (pair in query2Pairs) pair[0].b.x + pair[1].b.x];
+        velocityPairTotals.sort(Reflect.compare);
+        assertEq("30,40,50", velocityPairTotals.join(","), "Query2.iterCombinations should preserve item data");
+
+        var query3Triples = world.queryTriple(Entity, Position, Velocity).iterCombinations(3);
+        assertEq(1, query3Triples.length, "Query3.iterCombinations should work with mixed Entity data");
+        assertEq(combinationKey([first, second, third]), combinationKey([for (item in query3Triples[0]) item.a]), "Query3.iterCombinations should preserve Entity query field");
+    }
+
     static function testCommandEntityAccess():Void {
         var world = new World();
         var entity = world.spawn();
@@ -444,6 +644,8 @@ class EcsCoreTest {
         assertEq(direct[0].index + 1, direct[1].index, "world.spawnBatch should preserve reservation order");
         assertEq(1, world.get(direct[0], Position).x, "world.spawnBatch should keep first bundle data on first entity");
         assertEq(2, world.get(direct[1], Position).x, "world.spawnBatch should keep second bundle data on second entity");
+        var directDetails = world.queryPair(Entity, SpawnDetails).get(direct[0]);
+        assert(directDetails != null && directDetails.b.spawnedBy() != null && directDetails.b.spawnedBy().length > 0, "world.spawnBatch should record spawn source metadata");
 
         var commands = world.commands();
         var deferred = commands.spawnBatch([
@@ -462,6 +664,8 @@ class EcsCoreTest {
         assertEq(3, deferred[1].index, "commands.spawnBatch should preserve second reserved index");
         assertEq(3, world.get(deferred[0], Position).x, "commands.spawnBatch should keep first deferred bundle data on first entity");
         assertEq(4, world.get(deferred[1], Position).x, "commands.spawnBatch should keep second deferred bundle data on second entity");
+        var deferredDetails = world.queryPair(Entity, SpawnDetails).get(deferred[0]);
+        assert(deferredDetails != null && deferredDetails.b.spawnedBy() != null && deferredDetails.b.spawnedBy().length > 0, "commands.spawnBatch should preserve spawn source metadata from queue time");
     }
 
     static function testReservedEntityAccessSemantics():Void {
@@ -628,6 +832,12 @@ class EcsCoreTest {
         }
     }
 
+    static function combinationKey(entities:Array<Entity>):String {
+        var keys = [for (entity in entities) entity.key()];
+        keys.sort(Reflect.compare);
+        return keys.join("|");
+    }
+
     static function assertEntityNotSpawnedKindInvalid(kind:EntityNotSpawnedKind, label:String):Void {
         switch kind {
             case Invalid(_):
@@ -692,11 +902,19 @@ class MovingBundle implements Bundle {
 }
 
 class PlayerTag implements Component {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "player";
+    }
 }
 
 class EnemyTag implements Component {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "enemy";
+    }
 }
 
 class TimeResource implements Resource {

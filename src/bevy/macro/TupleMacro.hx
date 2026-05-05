@@ -90,6 +90,26 @@ class TupleMacro {
             })
         };
 
+        var queryFilterNode:Field = {
+            name: "node",
+            pos: base.pos,
+            access: [APublic],
+            meta: [],
+            kind: FFun({
+                args: [],
+                ret: macro : bevy.ecs.QueryFilter.QueryFilterNode,
+                expr: macro {
+                    var children:Array<bevy.ecs.QueryFilter.QueryFilterNode> = [];
+                    $b{[for (field in tupleFields) {
+                        var n = field.name;
+                        macro children.push((cast this.$n : bevy.ecs.QueryFilter).node());
+                    }]}
+                    return bevy.ecs.QueryFilter.QueryFilterNode.AllOf(children);
+                },
+                params: []
+            })
+        };
+
         var generatedName = base.name + "_" + arity;
         Context.defineType({
             pack: base.pack,
@@ -98,8 +118,8 @@ class TupleMacro {
             meta: [],
             params: typeParams,
             isExtern: false,
-            kind: TDClass(),
-            fields: tupleFields.concat([constructor])
+            kind: TDClass(null, [{pack: ["bevy", "ecs"], name: "QueryFilter", sub: null, params: []}]),
+            fields: tupleFields.concat([constructor, queryFilterNode])
         });
 
         return {

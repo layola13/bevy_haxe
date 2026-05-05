@@ -15,6 +15,7 @@ import bevy.async.AsyncRuntime;
 import bevy.async.Future;
 import bevy.ecs.All;
 import bevy.ecs.Added;
+import bevy.ecs.AnyOf;
 import bevy.ecs.Changed;
 import bevy.ecs.Commands;
 import bevy.ecs.Component;
@@ -25,6 +26,8 @@ import bevy.ecs.Or;
 import bevy.ecs.Query;
 import bevy.ecs.Query.Query2;
 import bevy.ecs.Query.Query3;
+import bevy.ecs.Has;
+import bevy.ecs.Option;
 import bevy.ecs.Tuple.Tuple1;
 import bevy.ecs.Tuple.Tuple2;
 import bevy.ecs.Tuple.Tuple3;
@@ -36,6 +39,9 @@ import bevy.ecs.Tuple.Tuple;
 import bevy.ecs.Res;
 import bevy.ecs.ResMut;
 import bevy.ecs.Resource;
+import bevy.ecs.Spawned;
+import bevy.ecs.SpawnDetails;
+import bevy.ecs.UniqueEntityArray;
 import bevy.ecs.With;
 import bevy.ecs.Without;
 import bevy.ecs.World;
@@ -51,6 +57,9 @@ class AppScheduleTest {
         var app = new App();
         app.world.insertResource(new Counter());
         app.world.insertResource(new ChangeStep(0));
+        app.world.insertResource(new SpawnStep(0));
+        app.world.insertResource(new SpawnedReport());
+        app.world.spawn([new SpawnedMarker(5)]);
         app.world.spawn([
             new AppPosition(1),
             new AppVelocity(2),
@@ -69,6 +78,8 @@ class AppScheduleTest {
             new AppTag()
         ]);
         app.world.spawn([new AppPosition(5)]);
+        app.world.spawn([new ComboPosition(10), new ComboVelocity(1)]);
+        app.world.spawn([new ComboPosition(20), new ComboVelocity(2)]);
         var handleAKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast AppAssetA]);
         var handleBKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast AppAssetB]);
         app.world.spawn([
@@ -80,6 +91,10 @@ class AppScheduleTest {
             new Handle<AppAssetA>(102, handleAKey),
             new HandleProbeTag()
         ]);
+        app.world.spawn([new AppAnyOfA(3), new AppAnyOfTag()]);
+        app.world.spawn([new AppAnyOfB(5), new AppAnyOfTag()]);
+        app.world.spawn([new AppAnyOfA(7), new AppAnyOfB(11), new AppAnyOfTag()]);
+        app.world.spawn([new AppAnyOfTag()]);
         app.world.initEvents(AppSignal);
         app.addRegisteredSystems(MainSchedule.Update);
 
@@ -106,10 +121,25 @@ class AppScheduleTest {
         assertEq(1, app.world.getResource(QueryPairFilterCount).value, "Query2<DataA, DataB, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(QueryEntityPairCount).value, "Query2<Entity, Data> param should inject mixed entity/component queries");
         assertEq(3, app.world.getResource(QueryTuplePairTotal).value, "Query<Tuple2<DataA, DataB>> should inject tuple query data");
+        assertEq(3, app.world.getResource(QueryTupleUniquePairTotal).value, "Query<Tuple2<DataA, DataB>> should support getManyUnique through system injection");
+        assertEq(1, app.world.getResource(QueryTupleCombinationPairCount).value, "Query<Tuple2<DataA, DataB>> should support iterCombinations through system injection");
+        assertEq(33, app.world.getResource(QueryTupleCombinationPairTotal).value, "Query<Tuple2<DataA, DataB>> iterCombinations should preserve tuple component data");
         assertEq(6, app.world.getResource(QueryTupleOneTotal).value, "Query<Tuple1<DataA>> should inject one-item tuple query data");
         assertEq(1, app.world.getResource(QueryTupleHandlePairCount).value, "Query<Tuple2<Handle<A>, Handle<B>>> should inject generic tuple query data");
         assertEq(302, app.world.getResource(QueryTupleHandlePairIdTotal).value, "Query<Tuple2<Handle<A>, Handle<B>>> should preserve typed handle ids");
         assertEq(1, app.world.getResource(QueryTupleHandleFilterCount).value, "Query<Tuple..., With<Handle<B>>> should honor generic filter keys");
+        assertEq(2, app.world.getResource(QueryHasAppTagCount).value, "Query<Has<T>, Filter> should match all filtered entities");
+        assertEq(1, app.world.getResource(QueryHasAppTagPresentCount).value, "Query<Has<T>, Filter> should report actual component presence");
+        assertEq(1, app.world.getResource(QueryPairHasAppTagPresentCount).value, "Query2<Component, Has<T>> should inject Has<T> query data");
+        assertEq(16, app.world.getResource(QueryTupleHasAppTagScore).value, "Query<Tuple<Component, Has<T>>> should inject Has<T> through tuple query data");
+        assertEq(1203, app.world.getResource(QueryTupleHandleHasScore).value, "Query<Tuple<Handle<A>, Has<Handle<B>>>> should preserve parameterized Has<T> keys");
+        assertEq(2, app.world.getResource(QueryOptionAppTagCount).value, "Query<Option<T>, Filter> should match all filtered entities");
+        assertEq(1, app.world.getResource(QueryOptionAppTagSomeCount).value, "Query<Option<T>, Filter> should report actual component presence");
+        assertEq(1, app.world.getResource(QueryPairOptionAppTagSomeCount).value, "Query2<Component, Option<T>> should inject Option<T> query data");
+        assertEq(16, app.world.getResource(QueryTupleOptionAppTagScore).value, "Query<Tuple<Component, Option<T>>> should inject Option<T> through tuple query data");
+        assertEq(404, app.world.getResource(QueryTupleHandleOptionScore).value, "Query<Tuple<Handle<A>, Option<Handle<B>>>> should preserve parameterized Option<T> keys");
+        assertEq(26, app.world.getResource(QueryAnyOfScore).value, "Query<AnyOf<A, B>> should match entities with at least one item and return Option fields");
+        assertEq(404, app.world.getResource(QueryAnyOfHandleScore).value, "Query<AnyOf<Handle<A>, Handle<B>>> should preserve parameterized component keys");
         assertEq(3, app.world.getResource(QueryTripleTotal).value, "Query3 param should read three-component tuples");
         assertEq(1, app.world.getResource(QueryTripleFilterCount).value, "Query3<DataA, DataB, DataC, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(QueryEntityTripleCount).value, "Query3<Entity, DataA, DataB> param should inject mixed entity/component queries");
@@ -147,12 +177,20 @@ class AppScheduleTest {
         assertEq(1, app.world.getResource(QueryTupleChangedCompositeOrFirst).value, "Query<Tuple..., Or<Changed<T>, ...>> should include startup inserts on first run");
         assertEq(1, app.world.getResource(QueryTupleChangedCompositeOrSecond).value, "Query<Tuple..., Or<Changed<T>, ...>> should include later tuple component mutations");
         assertEq(1, app.world.getResource(FilterCount).value, "Query<Data, Filter> param should respect filter type");
+        assertEq(1, app.world.getResource(QueryFilterTupleCount).value, "Query<Data, Tuple2<Filter...>> should compose filter tuples as conjunctions");
+        assertEq(2, app.world.getResource(QueryNestedFilterTupleOrCount).value, "Query<Data, Or<Tuple2<...>, ...>> should keep tuple filters as conjunction branches");
         assertEq(1, app.world.getResource(TaggedEntityCount).value, "Query<Entity, Filter> param should inject entity-only queries");
         assertEq(2, app.world.getResource(OrFilterCount).value, "Query<Data, Or<...>> param should compose filters");
         assertEq(1, app.world.getResource(AddedCountFirst).value, "Query<Data, Added<T>> param should see first-run additions");
         assertEq(0, app.world.getResource(AddedCountSecond).value, "Query<Data, Added<T>> param should stop matching after first run");
         assertEq(2, app.world.getResource(ChangedCountFirst).value, "Changed<T> should include startup inserts on first run");
         assertEq(1, app.world.getResource(ChangedCountSecond).value, "Changed<T> should match data mutated after last run");
+        var spawnedReport = app.world.getResource(SpawnedReport);
+        assertEq(5, spawnedReport.earlyFirst, "Spawned should include entities spawned before the first system run");
+        assertEq(12, spawnedReport.lateFirst, "Spawned should see command-spawned entities only after deferred commands are applied");
+        assertEq(0, spawnedReport.lateSecond, "Spawned should not keep reporting entities after the observing system has run");
+        assertEq(12, spawnedReport.detailsFirst, "SpawnDetails should report first-run spawned state for tuple query data");
+        assertEq(0, spawnedReport.detailsSecond, "SpawnDetails should stop reporting entities after its system has run");
         assertEq("received", app.world.getResource(EventStatus).value, "events should flow through systems");
         trace("AppScheduleTest ok");
     }
@@ -380,8 +418,11 @@ class AppScheduleTest {
 }
 
 class Counter implements Resource {
-    public var value:Int = 0;
-    public function new() {}
+    public var value:Int;
+
+    public function new(?value:Int) {
+        this.value = value != null ? value : 0;
+    }
 }
 
 class CommandFlag implements Resource {
@@ -447,6 +488,27 @@ class QueryTuplePairTotal implements Resource {
     }
 }
 
+class QueryTupleUniquePairTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleCombinationPairCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleCombinationPairTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class QueryTupleOneTotal implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -469,6 +531,90 @@ class QueryTupleHandlePairIdTotal implements Resource {
 }
 
 class QueryTupleHandleFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryHasAppTagCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryHasAppTagPresentCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryPairHasAppTagPresentCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHasAppTagScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHandleHasScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionAppTagCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionAppTagSomeCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryPairOptionAppTagSomeCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleOptionAppTagScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHandleOptionScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryAnyOfScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryAnyOfHandleScore implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -721,6 +867,20 @@ class FilterCount implements Resource {
     }
 }
 
+class QueryFilterTupleCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryNestedFilterTupleOrCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class TaggedEntityCount implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -760,6 +920,22 @@ class ChangedCountSecond implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
+    }
+}
+
+class SpawnedReport implements Resource {
+    public var earlyFirst:Int;
+    public var lateFirst:Int;
+    public var lateSecond:Int;
+    public var detailsFirst:Int;
+    public var detailsSecond:Int;
+
+    public function new() {
+        earlyFirst = -1;
+        lateFirst = -1;
+        lateSecond = -1;
+        detailsFirst = -1;
+        detailsSecond = -1;
     }
 }
 
@@ -862,12 +1038,63 @@ class AppVelocity implements Component {
     }
 }
 
+class ComboPosition implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class ComboVelocity implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class AppTag implements Component {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "app";
+    }
+}
+
+class SpawnedMarker implements Component {
+    public var value:Int;
+
+    public function new(value:Int) {
+        this.value = value;
+    }
 }
 
 class HandleProbeTag implements Component {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "handle-probe";
+    }
+}
+
+class AppAnyOfA implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppAnyOfB implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppAnyOfTag implements Component {
+    public var marker(default, null):String;
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "any-of";
+    }
 }
 
 class AppHealth implements Component {
@@ -962,14 +1189,29 @@ class AppSignal implements Event {
 }
 
 class AppAssetA implements Asset {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "asset-a";
+    }
 }
 
 class AppAssetB implements Asset {
-    public function new() {}
+    public var marker(default, null):String;
+
+    public function new(?marker:String) {
+        this.marker = marker != null ? marker : "asset-b";
+    }
 }
 
 class ChangeStep implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class SpawnStep implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -1101,6 +1343,31 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    public static function tuplePairUniqueQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>>, commands:Commands):Void {
+        var entities = [for (item in query.toArray()) item.entity];
+        var total = 0;
+        for (item in query.getManyUnique(UniqueEntityArray.from(entities))) {
+            total += item.component._0.value + item.component._1.value;
+        }
+        commands.insertResource(new QueryTupleUniquePairTotal(total));
+    }
+
+    @:system("Update")
+    public static function tuplePairCombinationQuerySystem(query:Query<Tuple2<ComboPosition, ComboVelocity>>, commands:Commands):Void {
+        var count = 0;
+        var total = 0;
+        for (pair in query.iterCombinations(2)) {
+            if (pair[0].entity.index != pair[1].entity.index) {
+                count++;
+                total += pair[0].component._0.value + pair[0].component._1.value;
+                total += pair[1].component._0.value + pair[1].component._1.value;
+            }
+        }
+        commands.insertResource(new QueryTupleCombinationPairCount(count));
+        commands.insertResource(new QueryTupleCombinationPairTotal(total));
+    }
+
+    @:system("Update")
     public static function tupleOneQuerySystem(query:Query<Tuple1<AppPosition>>, commands:Commands):Void {
         var total = 0;
         for (item in query.toArray()) {
@@ -1124,6 +1391,132 @@ class CounterSystems implements SystemClass implements AsyncClass {
     @:system("Update")
     public static function tupleGenericHandleFilterQuerySystem(query:Query<Tuple2<Handle<AppAssetA>, HandleProbeTag>, With<Handle<AppAssetB>>>, commands:Commands):Void {
         commands.insertResource(new QueryTupleHandleFilterCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function hasAppTagQuerySystem(query:Query<Has<AppTag>, With<AppPosition>>, commands:Commands):Void {
+        var count = 0;
+        var present = 0;
+        for (item in query.toArray()) {
+            count++;
+            if (item.component.value) {
+                present++;
+            }
+        }
+        commands.insertResource(new QueryHasAppTagCount(count));
+        commands.insertResource(new QueryHasAppTagPresentCount(present));
+    }
+
+    @:system("Update")
+    public static function pairHasAppTagQuerySystem(query:Query2<AppPosition, Has<AppTag>>, commands:Commands):Void {
+        var present = 0;
+        for (item in query.toArray()) {
+            if (item.b.isPresent()) {
+                present++;
+            }
+        }
+        commands.insertResource(new QueryPairHasAppTagPresentCount(present));
+    }
+
+    @:system("Update")
+    public static function tupleHasAppTagQuerySystem(query:Query<Tuple<AppPosition, Has<AppTag>>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            score += item.component._0.value;
+            if (item.component._1.value) {
+                score += 10;
+            }
+        }
+        commands.insertResource(new QueryTupleHasAppTagScore(score));
+    }
+
+    @:system("Update")
+    public static function tupleHandleHasQuerySystem(query:Query<Tuple<Handle<AppAssetA>, Has<Handle<AppAssetB>>>, With<HandleProbeTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            score += item.component._0.id;
+            if (item.component._1.value) {
+                score += 1000;
+            }
+        }
+        commands.insertResource(new QueryTupleHandleHasScore(score));
+    }
+
+    @:system("Update")
+    public static function optionAppTagQuerySystem(query:Query<Option<AppTag>, With<AppPosition>>, commands:Commands):Void {
+        var count = 0;
+        var some = 0;
+        for (item in query.toArray()) {
+            count++;
+            if (item.component.isSome()) {
+                some++;
+            }
+        }
+        commands.insertResource(new QueryOptionAppTagCount(count));
+        commands.insertResource(new QueryOptionAppTagSomeCount(some));
+    }
+
+    @:system("Update")
+    public static function pairOptionAppTagQuerySystem(query:Query2<AppPosition, Option<AppTag>>, commands:Commands):Void {
+        var some = 0;
+        for (item in query.toArray()) {
+            if (item.b.isSome()) {
+                some++;
+            }
+        }
+        commands.insertResource(new QueryPairOptionAppTagSomeCount(some));
+    }
+
+    @:system("Update")
+    public static function tupleOptionAppTagQuerySystem(query:Query<Tuple<AppPosition, Option<AppTag>>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            score += item.component._0.value;
+            if (item.component._1.isSome()) {
+                score += 10;
+            }
+        }
+        commands.insertResource(new QueryTupleOptionAppTagScore(score));
+    }
+
+    @:system("Update")
+    public static function tupleHandleOptionQuerySystem(query:Query<Tuple<Handle<AppAssetA>, Option<Handle<AppAssetB>>>, With<HandleProbeTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            score += item.component._0.id;
+            if (item.component._1.isSome()) {
+                score += item.component._1.value.id;
+            }
+        }
+        commands.insertResource(new QueryTupleHandleOptionScore(score));
+    }
+
+    @:system("Update")
+    public static function anyOfQuerySystem(query:Query<AnyOf<AppAnyOfA, AppAnyOfB>, With<AppAnyOfTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component._0.isSome()) {
+                score += item.component._0.value.value;
+            }
+            if (item.component._1.isSome()) {
+                score += item.component._1.value.value;
+            }
+        }
+        commands.insertResource(new QueryAnyOfScore(score));
+    }
+
+    @:system("Update")
+    public static function anyOfHandleQuerySystem(query:Query<AnyOf<Handle<AppAssetA>, Handle<AppAssetB>>, With<HandleProbeTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component._0.isSome()) {
+                score += item.component._0.value.id;
+            }
+            if (item.component._1.isSome()) {
+                score += item.component._1.value.id;
+            }
+        }
+        commands.insertResource(new QueryAnyOfHandleScore(score));
     }
 
     @:system("Update")
@@ -1379,6 +1772,16 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    public static function tupleFilterQuerySystem(query:Query<AppPosition, Tuple2<With<AppTag>, Without<HandleProbeTag>>>, commands:Commands):Void {
+        commands.insertResource(new QueryFilterTupleCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function nestedTupleFilterOrQuerySystem(query:Query<AppPosition, Or<Tuple2<With<AppTag>, Without<HandleProbeTag>>, Without<AppVelocity>>>, commands:Commands):Void {
+        commands.insertResource(new QueryNestedFilterTupleOrCount(query.toArray().length));
+    }
+
+    @:system("Update")
     public static function taggedEntitySystem(query:Query<bevy.ecs.Entity, With<AppTag>>, commands:Commands):Void {
         commands.insertResource(new TaggedEntityCount(query.toArray().length));
     }
@@ -1420,6 +1823,67 @@ class CounterSystems implements SystemClass implements AsyncClass {
         } else {
             commands.insertResource(new ChangedCountSecond(count));
         }
+    }
+
+    @:system("Update")
+    @:before("app.CounterSystems.spawnSpawnedMarkerWithCommands")
+    public static function earlySpawnedMarkerQuerySystem(query:Query<SpawnedMarker, Spawned>, step:Res<SpawnStep>, report:ResMut<SpawnedReport>):Void {
+        if (step.value.value != 0) {
+            return;
+        }
+        var total = 0;
+        for (item in query.toArray()) {
+            total += item.component.value;
+        }
+        report.value.earlyFirst = total;
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.earlySpawnedMarkerQuerySystem")
+    @:before("app.CounterSystems.lateSpawnedMarkerQuerySystem")
+    public static function spawnSpawnedMarkerWithCommands(step:ResMut<SpawnStep>, commands:Commands):Void {
+        if (step.value.value != 0) {
+            return;
+        }
+        commands.spawn([new SpawnedMarker(7)]);
+        step.value.value = 1;
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.spawnSpawnedMarkerWithCommands")
+    public static function lateSpawnedMarkerQuerySystem(query:Query<SpawnedMarker, Spawned>, step:ResMut<SpawnStep>, report:ResMut<SpawnedReport>):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            total += item.component.value;
+        }
+
+        if (step.value.value == 1) {
+            report.value.lateFirst = total;
+            step.value.value = 2;
+            return;
+        }
+        if (step.value.value == 2) {
+            report.value.lateSecond = total;
+            step.value.value = 3;
+        }
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.lateSpawnedMarkerQuerySystem")
+    public static function spawnDetailsQuerySystem(query:Query<Tuple<bevy.ecs.Entity, SpawnDetails, SpawnedMarker>, With<SpawnedMarker>>, report:ResMut<SpawnedReport>):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            var tuple = item.component;
+            if (tuple._0.index == item.entity.index && tuple._1.isSpawned()) {
+                total += tuple._2.value;
+            }
+        }
+
+        if (report.value.detailsFirst == -1) {
+            report.value.detailsFirst = total;
+            return;
+        }
+        report.value.detailsSecond = total;
     }
 
     @:system("Update")

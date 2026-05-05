@@ -5,6 +5,7 @@ enum QueryFilterKind {
     Exclude;
     AddedSince(sinceTick:Int);
     ChangedSince(sinceTick:Int);
+    SpawnedSince(sinceTick:Int);
 }
 
 enum QueryFilterNode {
