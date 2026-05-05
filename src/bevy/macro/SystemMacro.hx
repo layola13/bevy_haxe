@@ -161,12 +161,29 @@ class SystemMacro {
                             }
                             resolved.push(macro new bevy.ecs.ResMut(${buildResourceAccess(path, true, pos)}));
                         case "bevy.ecs.Query" | "Query":
-                            var queryResolved = resolveQueryArg(path, pos, lastRunTickName);
-                            var queryExpr = macro world.queryFiltered($p{queryResolved.componentType}, $e{queryResolved.filters}, $e{queryResolved.componentKey});
-                            resolved.push({
-                                expr: ECheckType({expr: ECast(queryExpr, null), pos: pos}, TPath(path)),
-                                pos: pos
-                            });
+                            var tupleResolved = resolveTupleQueryArg(path, pos, lastRunTickName);
+                            if (tupleResolved != null) {
+                                var tupleClassExpr = buildTupleRuntimeClassExpr(path, pos, tupleResolved.arity);
+                                var tupleExpr = macro new bevy.ecs.Query.QueryTuple(
+                                    world,
+                                    $e{tupleClassExpr},
+                                    $e{buildTupleFactoryExpr(path, pos, tupleResolved.arity)},
+                                    $e{tupleResolved.itemClasses},
+                                    $e{tupleResolved.itemKeys},
+                                    $e{tupleResolved.filters}
+                                );
+                                resolved.push({
+                                    expr: ECheckType({expr: ECast(tupleExpr, null), pos: pos}, TPath(path)),
+                                    pos: pos
+                                });
+                            } else {
+                                var queryResolved = resolveQueryArg(path, pos, lastRunTickName);
+                                var queryExpr = macro world.queryFiltered($p{queryResolved.componentType}, $e{queryResolved.filters}, $e{queryResolved.componentKey});
+                                resolved.push({
+                                    expr: ECheckType({expr: ECast(queryExpr, null), pos: pos}, TPath(path)),
+                                    pos: pos
+                                });
+                            }
                         case "bevy.ecs.Query2" | "Query2":
                             var pair = resolveQuery2Arg(path, pos, lastRunTickName);
                             var pairExpr = macro world.queryFilteredPair($p{pair.a}, $p{pair.b}, $e{pair.filters}, $e{pair.aKey}, $e{pair.bKey});
@@ -494,7 +511,12 @@ class SystemMacro {
                     var full = fullPath(path);
                     switch full {
                         case "bevy.ecs.Query" | "Query":
-                            queries.push(describeQueryAccess(path, pos));
+                            var tuplePath = extractTupleDataPath(path, pos);
+                            if (tuplePath != null && tuplePath.params != null && tuplePath.params.length > 0) {
+                                queries.push(describeTupleQueryAccess(path, pos, tuplePath.params.length));
+                            } else {
+                                queries.push(describeQueryAccess(path, pos));
+                            }
                         case "bevy.ecs.Query2" | "Query2":
                             queries.push(describeQuery2Access(path, pos));
                         case "bevy.ecs.Query3" | "Query3":
@@ -592,6 +614,36 @@ class SystemMacro {
         };
     }
 
+    static function resolveTupleQueryArg(path:TypePath, pos:Position, lastRunTickName:String):Null<{arity:Int, itemClasses:Expr, itemKeys:Expr, filters:Expr}> {
+        if (path.params == null || path.params.length < 1 || path.params.length > 2) {
+            Context.error("System Query params require one data type and an optional filter type", pos);
+        }
+
+        var tuplePath = extractTupleDataPath(path, pos);
+        if (tuplePath == null) {
+            return null;
+        }
+        if (tuplePath.params == null || tuplePath.params.length == 0) {
+            Context.error("Query tuple data parameter must declare at least one type parameter", pos);
+        }
+
+        var classExprs:Array<Expr> = [];
+        var keyExprs:Array<Expr> = [];
+        for (i in 0...tuplePath.params.length) {
+            var itemParam = tuplePath.params[i];
+            var itemPath = extractTypeParamPath(itemParam, pos, 'Query tuple parameter #${i + 1} must be a class path');
+            classExprs.push(typePathExpr(itemPath, pos));
+            keyExprs.push(buildOptionalTypeKeyExpr(itemParam, pos));
+        }
+
+        return {
+            arity: tuplePath.params.length,
+            itemClasses: macro $a{classExprs},
+            itemKeys: macro $a{keyExprs},
+            filters: path.params.length == 2 ? buildQueryFilterArrayExpr(path.params[1], pos, lastRunTickName) : macro []
+        };
+    }
+
     static function resolveQuery2Arg(path:TypePath, pos:Position, lastRunTickName:String):{a:Array<String>, b:Array<String>, aKey:Expr, bKey:Expr, filters:Expr} {
         if (path.params == null || path.params.length < 2 || path.params.length > 3) {
             Context.error("System Query2 params require two data types and an optional filter type", pos);
@@ -642,11 +694,39 @@ class SystemMacro {
         }
 
         var filterState = path.params.length == 2 ? describeFilterState(path.params[1], pos) : emptyFilterState();
+        var branches = withDataRequirements(filterState.branches, dataKeys);
         return {
             label: "Query",
             dataKeys: dataKeys,
-            filterBranches: filterState.branches,
-            required: filterState.required,
+            filterBranches: branches,
+            required: withRequiredDataKeys(filterState.required, dataKeys),
+            excluded: filterState.excluded,
+            filterAccessKeys: filterState.accessKeys
+        };
+    }
+
+    static function describeTupleQueryAccess(path:TypePath, pos:Position, arity:Int):QueryAccessState {
+        if (path.params == null || path.params.length < 1 || path.params.length > 2) {
+            Context.error("System Query params require one data type and an optional filter type", pos);
+        }
+        var tuplePath = extractTupleDataPath(path, pos);
+        if (tuplePath.params == null || tuplePath.params.length != arity) {
+            Context.error('Query tuple data parameter arity mismatch: expected $arity data types', pos);
+        }
+
+        var dataKeys:Array<String> = [];
+        for (i in 0...arity) {
+            var inner = extractTypeParamPath(tuplePath.params[i], pos, 'Query tuple parameter #${i + 1} must be a class path');
+            pushQueryDataKey(dataKeys, inner, pos);
+        }
+
+        var filterState = path.params.length == 2 ? describeFilterState(path.params[1], pos) : emptyFilterState();
+        var branches = withDataRequirements(filterState.branches, dataKeys);
+        return {
+            label: 'Query<Tuple$arity>',
+            dataKeys: dataKeys,
+            filterBranches: branches,
+            required: withRequiredDataKeys(filterState.required, dataKeys),
             excluded: filterState.excluded,
             filterAccessKeys: filterState.accessKeys
         };
@@ -672,11 +752,12 @@ class SystemMacro {
         }
 
         var filterState = path.params.length == 3 ? describeFilterState(path.params[2], pos) : emptyFilterState();
+        var branches = withDataRequirements(filterState.branches, dataKeys);
         return {
             label: "Query2",
             dataKeys: dataKeys,
-            filterBranches: filterState.branches,
-            required: filterState.required,
+            filterBranches: branches,
+            required: withRequiredDataKeys(filterState.required, dataKeys),
             excluded: filterState.excluded,
             filterAccessKeys: filterState.accessKeys
         };
@@ -708,11 +789,12 @@ class SystemMacro {
         }
 
         var filterState = path.params.length == 4 ? describeFilterState(path.params[3], pos) : emptyFilterState();
+        var branches = withDataRequirements(filterState.branches, dataKeys);
         return {
             label: "Query3",
             dataKeys: dataKeys,
-            filterBranches: filterState.branches,
-            required: filterState.required,
+            filterBranches: branches,
+            required: withRequiredDataKeys(filterState.required, dataKeys),
             excluded: filterState.excluded,
             filterAccessKeys: filterState.accessKeys
         };
@@ -897,6 +979,26 @@ class SystemMacro {
         };
     }
 
+    static function withDataRequirements(branches:Array<FilterBranch>, dataKeys:Array<String>):Array<FilterBranch> {
+        var result:Array<FilterBranch> = [];
+        for (branch in branches) {
+            var next = copyFilterBranch(branch);
+            for (key in dataKeys) {
+                next.required.set(key, true);
+            }
+            result.push(next);
+        }
+        return result;
+    }
+
+    static function withRequiredDataKeys(required:Map<String, Bool>, dataKeys:Array<String>):Map<String, Bool> {
+        var next = copyKeyMap(required);
+        for (key in dataKeys) {
+            next.set(key, true);
+        }
+        return next;
+    }
+
     static function copyKeyMap(source:Map<String, Bool>):Map<String, Bool> {
         var result:Map<String, Bool> = new Map();
         if (source != null) {
@@ -1077,6 +1179,125 @@ class SystemMacro {
             default:
                 Context.error("System resource params require a class type parameter", pos);
         }
+    }
+
+    static function detectTupleQueryArity(path:TypePath, pos:Position):Int {
+        var tuplePath = extractTupleDataPath(path, pos);
+        if (tuplePath == null || tuplePath.params == null) {
+            return 1;
+        }
+        return tuplePath.params.length;
+    }
+
+    static function extractTupleDataPath(path:TypePath, pos:Position):Null<TypePath> {
+        if (path.params == null || path.params.length < 1) {
+            Context.error("System Query params require one data type", pos);
+        }
+        return switch path.params[0] {
+            case TPType(TPath(inner)):
+                if (!isTupleTypePath(inner)) {
+                    null;
+                } else {
+                    inner;
+                }
+            default:
+                Context.error("Query tuple data parameter must be a class path", pos);
+        };
+    }
+
+    static function isTupleTypePath(path:TypePath):Bool {
+        if (path.pack.length == 0 && path.name == "Tuple") {
+            return true;
+        }
+        if (path.pack.length == 0 && StringTools.startsWith(path.name, "Tuple")) {
+            return isPositiveIntString(path.name.substr("Tuple".length));
+        }
+        if (path.pack.length == 2
+            && path.pack[0] == "bevy"
+            && path.pack[1] == "ecs"
+            && path.name == "Tuple"
+            && (path.sub == null || path.sub == "")) {
+            return true;
+        }
+        if (path.pack.length == 2
+            && path.pack[0] == "bevy"
+            && path.pack[1] == "ecs"
+            && path.name == "Tuple"
+            && path.sub != null
+            && StringTools.startsWith(path.sub, "Tuple")) {
+            return isPositiveIntString(path.sub.substr("Tuple".length));
+        }
+        return false;
+    }
+
+    static function extractTypeParamPath(param:TypeParam, pos:Position, errorMessage:String):TypePath {
+        return switch param {
+            case TPType(TPath(inner)):
+                inner;
+            default:
+                Context.error(errorMessage, pos);
+        };
+    }
+
+    static function buildTupleRuntimeClassExpr(path:TypePath, pos:Position, arity:Int):Expr {
+        var tupleDataPath = extractTupleDataPath(path, pos);
+        var tupleBase = {
+            pack: tupleDataPath.pack,
+            name: tupleDataPath.name,
+            sub: tupleDataPath.sub,
+            params: []
+        };
+        var resolvedType = Context.follow(Context.resolveType(TPath(tupleBase), pos));
+        var generatedPath = switch resolvedType {
+            case TInst(cls, _):
+                var classType = cls.get();
+                classType.pack.concat([classType.name + "_" + arity]).join(".");
+            default:
+                var tupleBaseName = tupleDataPath.sub != null && tupleDataPath.sub != "" ? tupleDataPath.sub : tupleDataPath.name;
+                var generatedName = tupleBaseName + "_" + arity;
+                tupleDataPath.pack.concat([generatedName]).join(".");
+        };
+        return macro cast Type.resolveClass($v{generatedPath});
+    }
+
+
+    static function buildTupleFactoryExpr(path:TypePath, pos:Position, arity:Int):Expr {
+        var tupleDataPath = extractTupleDataPath(path, pos);
+        var ctorArgs:Array<Expr> = [for (i in 0...arity) macro __bevyTupleRaw[$v{i}]];
+
+        return {
+            expr: EFunction(FAnonymous, {
+                args: [{
+                    name: "__bevyTupleRaw",
+                    type: macro : Array<Any>,
+                    opt: false,
+                    value: null
+                }],
+                ret: null,
+                expr: {
+                    expr: EReturn({
+                        expr: ENew(tupleDataPath, ctorArgs),
+                        pos: pos
+                    }),
+                    pos: pos
+                },
+                params: []
+            }),
+            pos: pos
+        };
+    }
+
+    static function isPositiveIntString(value:String):Bool {
+        if (value == null || value == "") {
+            return false;
+        }
+        for (i in 0...value.length) {
+            var code = value.charCodeAt(i);
+            if (code < "0".code || code > "9".code) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static function complexTypeStorageKey(path:TypePath, pos:Position, label:String):String {

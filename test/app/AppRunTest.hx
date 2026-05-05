@@ -1,6 +1,8 @@
 package app;
 
 import bevy.app.App;
+import bevy.app.AppError;
+import bevy.app.AppError.AppErrorKind;
 import bevy.app.PluginsState;
 import bevy.app.MainSchedule;
 import bevy.app.ScheduleRunnerPlugin;
@@ -20,6 +22,8 @@ class AppRunTest {
         testAddPluginsComposition();
         testAddPluginsMacroVarargs();
         testPluginAddedIntrospection();
+        testPluginUniquenessTypedError();
+        testPluginGroupTypedErrors();
         trace("AppRunTest ok");
     }
 
@@ -241,6 +245,78 @@ class AppRunTest {
         assert(!app.isPluginAdded(AlphaPlugin), "isPluginAdded should be false before registration");
         app.addPlugin(new AlphaPlugin());
         assert(app.isPluginAdded(AlphaPlugin), "isPluginAdded should track registered plugin types");
+    }
+
+    static function testPluginUniquenessTypedError():Void {
+        var app = new App();
+        app.world.insertResource(new RunTrace());
+        app.addPlugin(new AlphaPlugin());
+
+        var typedError:AppError = null;
+        try {
+            app.addPlugin(new AlphaPlugin());
+        } catch (error:AppError) {
+            typedError = error;
+        }
+
+        assert(typedError != null, "duplicate unique plugin registration should throw AppError");
+        switch typedError.kind {
+            case PluginAlreadyAdded(pluginName):
+                assert(pluginName != null && pluginName != "", "duplicate-plugin typed error should preserve plugin name");
+            default:
+                throw "unexpected plugin uniqueness typed error kind";
+        }
+    }
+
+    static function testPluginGroupTypedErrors():Void {
+        testPluginGroupMissingTargetError();
+        testPluginGroupAddFailedError();
+    }
+
+    static function testPluginGroupMissingTargetError():Void {
+        var typedError:AppError = null;
+        try {
+            bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                .add(new AlphaPlugin())
+                .addBefore(BetaPlugin, new GammaPlugin());
+        } catch (error:AppError) {
+            typedError = error;
+        }
+
+        assert(typedError != null, "missing target plugin should throw typed plugin-group error");
+        switch typedError.kind {
+            case PluginGroupPluginMissing(groupName, pluginTypeKey):
+                assert(groupName != null && groupName != "", "missing-target plugin-group error should keep group name");
+                assert(pluginTypeKey != null && pluginTypeKey != "", "missing-target plugin-group error should keep type key");
+            default:
+                throw "unexpected plugin-group missing-target typed error kind";
+        }
+    }
+
+    static function testPluginGroupAddFailedError():Void {
+        var app = new App();
+        app.world.insertResource(new RunTrace());
+
+        var typedError:AppError = null;
+        try {
+            app.addPlugin(new AlphaPlugin());
+            app.addPluginGroup(
+                bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                    .add(new AlphaPlugin())
+            );
+        } catch (error:AppError) {
+            typedError = error;
+        }
+
+        assert(typedError != null, "plugin-group finish failure should throw typed plugin-group error");
+        switch typedError.kind {
+            case PluginGroupAddFailed(groupName, pluginName, cause):
+                assert(groupName != null && groupName != "", "group-add-failed error should keep group name");
+                assert(pluginName != null && pluginName != "", "group-add-failed error should keep plugin name");
+                assert(cause != null, "group-add-failed error should preserve nested cause");
+            default:
+                throw "unexpected plugin-group add-failed typed error kind";
+        }
     }
 
     static function assertEq<T>(expected:T, actual:T, label:String):Void {

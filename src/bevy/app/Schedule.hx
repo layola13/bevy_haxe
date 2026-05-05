@@ -6,6 +6,8 @@ import bevy.app.SystemRegistry.SystemConditionRunner;
 import bevy.app.SystemRegistry.SystemDescriptor;
 import bevy.app.SystemRegistry.SystemRunner;
 import bevy.app.SystemRegistry.SetConfig;
+import bevy.app.AppError;
+import bevy.app.AppError.AppErrorKind;
 
 class Schedule {
     public var label(default, null):String;
@@ -191,7 +193,7 @@ class Schedule {
         }
 
         if (ordered.length != systems.length) {
-            throw 'Schedule ordering cycle detected in "$label"';
+            throw new AppError(AppErrorKind.ScheduleOrderingCycle(label));
         }
 
         return ordered;
@@ -199,10 +201,10 @@ class Schedule {
 
     private function addEdge(source:String, target:String, edges:Map<String, Array<String>>, indegree:Map<String, Int>, descriptors:Map<String, SystemDescriptor>):Void {
         if (!descriptors.exists(source)) {
-            throw 'System ordering reference "$source" was not found in schedule "$label"';
+            throw new AppError(AppErrorKind.ScheduleOrderingSourceMissing(label, source));
         }
         if (!descriptors.exists(target)) {
-            throw 'System ordering reference "$target" was not found in schedule "$label"';
+            throw new AppError(AppErrorKind.ScheduleOrderingTargetMissing(label, target));
         }
 
         var outgoing = edges.get(source);
@@ -232,7 +234,7 @@ class Schedule {
     private function requireSetMembers(setName:String, systemsBySet:Map<String, Array<String>>):Array<String> {
         var members = systemsBySet.get(normalizeSetName(setName));
         if (members == null || members.length == 0) {
-            throw 'System set "$setName" has no systems in schedule "$label"';
+            throw new AppError(AppErrorKind.ScheduleSetHasNoSystems(label, setName));
         }
         return members;
     }
@@ -247,7 +249,7 @@ class Schedule {
 
     private function normalizeSetName(value:String):String {
         if (value == null || value == "") {
-            throw 'System set name must not be empty in schedule "$label"';
+            throw new AppError(AppErrorKind.ScheduleSetEmptyName(label));
         }
         return value;
     }
@@ -260,7 +262,7 @@ class Schedule {
 
     private function asBool(value:Dynamic):Bool {
         if (!Std.isOfType(value, Bool)) {
-            throw 'run_if condition in schedule "$label" must resolve to Bool';
+            throw new AppError(AppErrorKind.ScheduleRunIfNotBool(label));
         }
         return cast value;
     }

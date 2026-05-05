@@ -1,7 +1,10 @@
 package bevy.ecs;
 
 import bevy.ecs.EcsError.QueryDoesNotMatchError;
-import bevy.ecs.EcsError.QuerySingleMissingError;
+import bevy.ecs.EcsError.QueryEntityNotSpawnedError;
+import bevy.ecs.EcsError.EntityDoesNotExistError;
+import bevy.ecs.EcsError.QuerySingleMultipleEntitiesError;
+import bevy.ecs.EcsError.QuerySingleNoEntitiesError;
 import bevy.ecs.Added;
 import bevy.ecs.Changed;
 import bevy.ecs.With;
@@ -125,6 +128,11 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return result;
         }
         for (entity in entities) {
+            try {
+                world.entity(entity);
+            } catch (error:EntityDoesNotExistError) {
+                throw new QueryEntityNotSpawnedError(entity, "Query", error);
+            }
             var item = get(entity);
             if (item == null) {
                 throw new QueryDoesNotMatchError(entity, "Query");
@@ -147,11 +155,14 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function single():QueryItem<T> {
-        var item = getSingle();
-        if (item == null) {
-            throw new QuerySingleMissingError("Query");
+        var items = toArray();
+        if (items.length == 0) {
+            throw new QuerySingleNoEntitiesError("Query");
         }
-        return item;
+        if (items.length > 1) {
+            throw new QuerySingleMultipleEntitiesError("Query");
+        }
+        return items[0];
     }
 }
 
@@ -262,6 +273,11 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return result;
         }
         for (entity in entities) {
+            try {
+                world.entity(entity);
+            } catch (error:EntityDoesNotExistError) {
+                throw new QueryEntityNotSpawnedError(entity, "Query2", error);
+            }
             var item = get(entity);
             if (item == null) {
                 throw new QueryDoesNotMatchError(entity, "Query2");
@@ -284,11 +300,18 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function single():QueryItem2<A, B> {
-        var item = getSingle();
-        if (item == null) {
-            throw new QuerySingleMissingError("Query2");
+        var items = toArray();
+        if (items.length == 0) {
+            throw new QuerySingleNoEntitiesError("Query2");
         }
-        return item;
+        if (items.length > 1) {
+            throw new QuerySingleMultipleEntitiesError("Query2");
+        }
+        return items[0];
+    }
+
+    private inline function isEntityClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
 }
 
@@ -405,6 +428,11 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return result;
         }
         for (entity in entities) {
+            try {
+                world.entity(entity);
+            } catch (error:EntityDoesNotExistError) {
+                throw new QueryEntityNotSpawnedError(entity, "Query3", error);
+            }
             var item = get(entity);
             if (item == null) {
                 throw new QueryDoesNotMatchError(entity, "Query3");
@@ -427,14 +455,154 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     public function single():QueryItem3<A, B, C> {
-        var item = getSingle();
-        if (item == null) {
-            throw new QuerySingleMissingError("Query3");
+        var items = toArray();
+        if (items.length == 0) {
+            throw new QuerySingleNoEntitiesError("Query3");
         }
-        return item;
+        if (items.length > 1) {
+            throw new QuerySingleMultipleEntitiesError("Query3");
+        }
+        return items[0];
+    }
+
+    private inline function isEntityClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
 }
 
-private function isEntityClass<T>(cls:Class<T>):Bool {
-    return Type.getClassName(cast cls) == Type.getClassName(Entity);
+@:allow(bevy.macro.SystemMacro)
+class QueryTuple<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query<T, F> {
+    private var worldRef:World;
+    private var itemClasses:Array<Class<Any>>;
+    private var itemKeys:Array<Null<String>>;
+    private var tupleFilters:Array<bevy.ecs.QueryFilter>;
+    private var tupleFactory:Array<Any>->T;
+
+    public function new(world:World, tupleClass:Class<T>, tupleFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>) {
+        super(world, tupleClass, null);
+        this.worldRef = world;
+        this.tupleFactory = tupleFactory;
+        this.itemClasses = itemClasses;
+        this.itemKeys = itemKeys;
+        this.tupleFilters = filters != null ? filters.copy() : [];
+    }
+
+    override public function filter(value:bevy.ecs.QueryFilter):Query<T, F> {
+        tupleFilters.push(value);
+        return this;
+    }
+
+    override public function filterAll(values:Array<bevy.ecs.QueryFilter>):Query<T, F> {
+        for (value in values) {
+            tupleFilters.push(value);
+        }
+        return this;
+    }
+
+    override public function with<C>(cls:Class<C>, ?filterKey:String):Query<T, F> {
+        tupleFilters.push(With.of(cls, filterKey));
+        return this;
+    }
+
+    override public function without<C>(cls:Class<C>, ?filterKey:String):Query<T, F> {
+        tupleFilters.push(Without.of(cls, filterKey));
+        return this;
+    }
+
+    override public function added<C>(cls:Class<C>, sinceTick:Int, ?filterKey:String):Query<T, F> {
+        tupleFilters.push(Added.of(cls, sinceTick, filterKey));
+        return this;
+    }
+
+    override public function changed<C>(cls:Class<C>, sinceTick:Int, ?filterKey:String):Query<T, F> {
+        tupleFilters.push(Changed.of(cls, sinceTick, filterKey));
+        return this;
+    }
+
+    override public function toArray():Array<QueryItem<T>> {
+        var raw = worldRef.queryTuple(itemClasses, tupleFilters, itemKeys);
+        var result:Array<QueryItem<T>> = [];
+        for (item in raw) {
+            result.push({
+                entity: item.entity,
+                component: tupleFactory(item.components)
+            });
+        }
+        return result;
+    }
+
+    override public function iter():Array<QueryItem<T>> {
+        return toArray();
+    }
+
+    override public function get(entity:Entity):Null<QueryItem<T>> {
+        if (!worldRef.isAlive(entity)) {
+            return null;
+        }
+
+        var items = toArray();
+        for (item in items) {
+            if (item.entity.equals(entity)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    override public function iterMany(entities:Array<Entity>):Array<QueryItem<T>> {
+        var result:Array<QueryItem<T>> = [];
+        if (entities == null) {
+            return result;
+        }
+        for (entity in entities) {
+            var item = get(entity);
+            if (item != null) {
+                result.push(item);
+            }
+        }
+        return result;
+    }
+
+    override public function getMany(entities:Array<Entity>):Array<QueryItem<T>> {
+        var result:Array<QueryItem<T>> = [];
+        if (entities == null) {
+            return result;
+        }
+        for (entity in entities) {
+            try {
+                worldRef.entity(entity);
+            } catch (error:EntityDoesNotExistError) {
+                throw new QueryEntityNotSpawnedError(entity, "Query", error);
+            }
+            var item = get(entity);
+            if (item == null) {
+                throw new QueryDoesNotMatchError(entity, "Query");
+            }
+            result.push(item);
+        }
+        return result;
+    }
+
+    override public function getSingle():Null<QueryItem<T>> {
+        var items = toArray();
+        if (items.length == 1) {
+            return items[0];
+        }
+        return null;
+    }
+
+    override public function singleOrNull():Null<QueryItem<T>> {
+        return getSingle();
+    }
+
+    override public function single():QueryItem<T> {
+        var items = toArray();
+        if (items.length == 0) {
+            throw new QuerySingleNoEntitiesError("Query");
+        }
+        if (items.length > 1) {
+            throw new QuerySingleMultipleEntitiesError("Query");
+        }
+        return items[0];
+    }
 }

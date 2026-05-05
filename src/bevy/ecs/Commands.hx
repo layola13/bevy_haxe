@@ -1,5 +1,10 @@
 package bevy.ecs;
 
+import bevy.ecs.EcsError.EntityDoesNotExistError;
+import bevy.ecs.EcsError.EntityNotSpawnedError;
+import bevy.ecs.EcsError.EntityNotSpawnedKind;
+import bevy.ecs.EcsError.InvalidEntityError;
+
 typedef CommandOp = World->Void;
 
 class Commands {
@@ -12,12 +17,11 @@ class Commands {
     }
 
     public function spawn(?bundle:Array<Dynamic>):Entity {
-        var entity = world.spawn();
-        if (bundle != null) {
-            for (component in bundle) {
-                insert(entity, component);
-            }
-        }
+        var entity = world.reserveEntity();
+        var deferredBundle = bundle != null ? bundle.copy() : null;
+        queue.push(function(world) {
+            world.spawnReserved(entity, deferredBundle);
+        });
         return entity;
     }
 
@@ -26,11 +30,44 @@ class Commands {
     }
 
     public function spawnEmpty():EntityCommands {
-        return new EntityCommands(this, world.spawn());
+        return new EntityCommands(this, spawn());
+    }
+
+    public function spawnBatch(bundles:Array<Bundle>):Array<Entity> {
+        var result:Array<Entity> = [];
+        if (bundles == null || bundles.length == 0) {
+            return result;
+        }
+        var reserved = world.reserveEntities(bundles.length);
+        for (i in 0...bundles.length) {
+            var entity = reserved[i];
+            var deferredBundle = bundles[i];
+            result.push(entity);
+            queue.push(function(world) {
+                world.spawnReserved(entity, deferredBundle.toBundle());
+            });
+        }
+        return result;
     }
 
     public function entity(entity:Entity):EntityCommands {
         return new EntityCommands(this, entity);
+    }
+
+    public function getEntity(entity:Entity):EntityCommands {
+        if (!world.containsEntity(entity)) {
+            throw new InvalidEntityError(entity, currentGenerationForInvalidEntity(entity));
+        }
+        return new EntityCommands(this, entity);
+    }
+
+    public function getSpawnedEntity(entity:Entity):EntityCommands {
+        if (world.isAlive(entity)) {
+            return new EntityCommands(this, entity);
+        }
+
+        var kind = entityNotSpawnedKind(entity);
+        throw new EntityNotSpawnedError(entity, kind);
     }
 
     public function insert<T>(entity:Entity, component:T):Commands {
@@ -107,6 +144,24 @@ class Commands {
 
     public function len():Int {
         return queue.length;
+    }
+
+    private function entityNotSpawnedKind(entity:Entity):EntityNotSpawnedKind {
+        try {
+            world.entity(entity);
+            return EntityNotSpawnedKind.ValidButNotSpawned;
+        } catch (error:EntityDoesNotExistError) {
+            return error.kind;
+        }
+    }
+
+    private function currentGenerationForInvalidEntity(entity:Entity):Null<Int> {
+        return switch entityNotSpawnedKind(entity) {
+            case Invalid(currentGeneration):
+                currentGeneration;
+            case ValidButNotSpawned:
+                null;
+        };
     }
 }
 

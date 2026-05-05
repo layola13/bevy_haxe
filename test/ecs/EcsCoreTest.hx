@@ -7,12 +7,25 @@ import bevy.ecs.Commands;
 import bevy.ecs.Bundle;
 import bevy.ecs.Component;
 import bevy.ecs.EcsError.EntityDoesNotExistError;
+import bevy.ecs.EcsError.EntityNotSpawnedError;
+import bevy.ecs.EcsError.EntityNotSpawnedKind;
+import bevy.ecs.EcsError.InvalidEntityError;
 import bevy.ecs.Entity;
 import bevy.ecs.Event;
 import bevy.ecs.Events;
 import bevy.ecs.EcsError.MissingResourceError;
 import bevy.ecs.EcsError.QueryDoesNotMatchError;
+import bevy.ecs.EcsError.QueryEntityNotSpawnedError;
+import bevy.ecs.EcsError.QuerySingleKind;
+import bevy.ecs.EcsError.QuerySingleMultipleEntitiesError;
 import bevy.ecs.EcsError.QuerySingleMissingError;
+import bevy.ecs.EcsError.QuerySingleNoEntitiesError;
+import bevy.ecs.EcsError.QueryFilterError;
+import bevy.ecs.EcsError.QueryFilterErrorKind;
+import bevy.ecs.EcsError.SpawnError;
+import bevy.ecs.EcsError.SpawnErrorKind;
+import bevy.ecs.EcsError.TypeKeyError;
+import bevy.ecs.EcsError.TypeKeyErrorKind;
 import bevy.ecs.Resource;
 import bevy.ecs.World;
 import bevy.ecs.With;
@@ -50,7 +63,13 @@ class EcsCoreTest {
         testEntityWorldAccess();
         testQueryCountAndStrictGetMany();
         testCommandEntityAccess();
+        testCommandGetEntitySemantics();
+        testDeferredSpawnSemantics();
+        testSpawnBatchSemantics();
+        testReservedEntityAccessSemantics();
         testTypedEcsErrors();
+        testTypeKeyTypedErrors();
+        testQueryFilterTypedErrors();
         trace("EcsCoreTest ok");
     }
 
@@ -58,8 +77,10 @@ class EcsCoreTest {
         var world = new World();
         var first = world.spawn();
         assert(world.isAlive(first), "spawned entity should be alive");
+        assert(world.containsEntity(first), "spawned entity id should be valid");
         assert(world.despawn(first), "despawn should succeed");
         assert(!world.isAlive(first), "old entity handle should be dead");
+        assert(!world.containsEntity(first), "despawned entity id should become stale");
         var second = world.spawn();
         assert(first.index == second.index, "freed entity index should be reused");
         assert(first.generation != second.generation, "generation should change on reuse");
@@ -351,10 +372,124 @@ class EcsCoreTest {
         assert(world.entity(deferred).contains(PlayerTag), "spawnEmpty entity commands should apply to new entities");
     }
 
+    static function testCommandGetEntitySemantics():Void {
+        var world = new World();
+        var commands = world.commands();
+
+        var reserved = world.reserveEntity();
+        var spawned = world.spawn([new Position(3, 4)]);
+        var stale = world.spawn();
+        world.despawn(stale);
+
+        var reservedCommands = commands.getEntity(reserved);
+        reservedCommands.insert(new PlayerTag());
+        assertEq(reserved.index, reservedCommands.id().index, "Commands.getEntity should accept valid reserved entities");
+
+        var spawnedCommands = commands.getSpawnedEntity(spawned);
+        spawnedCommands.insert(new Velocity(1, 2));
+        assertEq(spawned.index, spawnedCommands.id().index, "Commands.getSpawnedEntity should accept spawned entities");
+
+        var reservedNotSpawnedError:EntityNotSpawnedError = null;
+        try {
+            commands.getSpawnedEntity(reserved);
+        } catch (error:EntityNotSpawnedError) {
+            reservedNotSpawnedError = error;
+        }
+        assert(reservedNotSpawnedError != null, "Commands.getSpawnedEntity should reject reserved entities");
+        assertEntityNotSpawnedKindValidButNotSpawned(reservedNotSpawnedError.kind, "reserved entity should report ValidButNotSpawned kind");
+
+        var staleNotSpawnedError:EntityNotSpawnedError = null;
+        try {
+            commands.getSpawnedEntity(stale);
+        } catch (error:EntityNotSpawnedError) {
+            staleNotSpawnedError = error;
+        }
+        assert(staleNotSpawnedError != null, "Commands.getSpawnedEntity should reject stale entities");
+        assertEntityNotSpawnedKindInvalid(staleNotSpawnedError.kind, "stale entity should report Invalid kind");
+
+        var invalidEntityError:InvalidEntityError = null;
+        try {
+            commands.getEntity(stale);
+        } catch (error:InvalidEntityError) {
+            invalidEntityError = error;
+        }
+        assert(invalidEntityError != null, "Commands.getEntity should reject stale entities");
+    }
+
+    static function testDeferredSpawnSemantics():Void {
+        var world = new World();
+        var commands = world.commands();
+
+        var deferred = commands.spawn([new Position(11, 12)]);
+        assert(world.containsEntity(deferred), "reserved id should be valid before apply");
+        assert(!world.isAlive(deferred), "reserved id should not be spawned before apply");
+        assert(world.getEntity(deferred) == null, "reserved id should not be visible through getEntity before apply");
+        assertEq(0, world.query(Position).count(), "reserved spawn should be invisible to queries before apply");
+
+        commands.apply();
+        assert(world.isAlive(deferred), "reserved id should become spawned after apply");
+        assert(world.entity(deferred).contains(Position), "deferred spawn should materialize components on apply");
+        assertEq(1, world.query(Position).count(), "deferred spawn should become query-visible after apply");
+    }
+
+    static function testSpawnBatchSemantics():Void {
+        var world = new World();
+
+        var direct = world.spawnBatch([
+            new MovingBundle(new Position(1, 1), new Velocity(1, 0)),
+            new MovingBundle(new Position(2, 2), new Velocity(0, 1))
+        ]);
+        assertEq(2, direct.length, "world.spawnBatch should return all spawned entities");
+        assertEq(2, world.query(Position).count(), "world.spawnBatch should immediately spawn all bundles");
+        assertEq(direct[0].index + 1, direct[1].index, "world.spawnBatch should preserve reservation order");
+        assertEq(1, world.get(direct[0], Position).x, "world.spawnBatch should keep first bundle data on first entity");
+        assertEq(2, world.get(direct[1], Position).x, "world.spawnBatch should keep second bundle data on second entity");
+
+        var commands = world.commands();
+        var deferred = commands.spawnBatch([
+            new MovingBundle(new Position(3, 3), new Velocity(1, 1)),
+            new MovingBundle(new Position(4, 4), new Velocity(2, 2))
+        ]);
+        assertEq(2, deferred.length, "commands.spawnBatch should return reserved entities");
+        assert(world.containsEntity(deferred[0]) && world.containsEntity(deferred[1]), "commands.spawnBatch should reserve valid ids");
+        assert(!world.isAlive(deferred[0]) && !world.isAlive(deferred[1]), "commands.spawnBatch ids should be unspawned before apply");
+        assertEq(2, world.query(Position).count(), "commands.spawnBatch should stay deferred before apply");
+
+        commands.apply();
+        assert(world.isAlive(deferred[0]) && world.isAlive(deferred[1]), "commands.spawnBatch ids should spawn after apply");
+        assertEq(4, world.query(Position).count(), "commands.spawnBatch should materialize all bundles after apply");
+        assertEq(2, deferred[0].index, "commands.spawnBatch should preserve first reserved index");
+        assertEq(3, deferred[1].index, "commands.spawnBatch should preserve second reserved index");
+        assertEq(3, world.get(deferred[0], Position).x, "commands.spawnBatch should keep first deferred bundle data on first entity");
+        assertEq(4, world.get(deferred[1], Position).x, "commands.spawnBatch should keep second deferred bundle data on second entity");
+    }
+
+    static function testReservedEntityAccessSemantics():Void {
+        var world = new World();
+        var reserved = world.reserveEntity();
+        assert(world.containsEntity(reserved), "reserveEntity should return a valid entity id");
+        assert(!world.isAlive(reserved), "reserveEntity id should not be alive until spawned");
+        assert(world.getEntity(reserved) == null, "getEntity should hide reserved-unspawned ids");
+        assert(world.getEntityMut(reserved) == null, "getEntityMut should hide reserved-unspawned ids");
+
+        var commands = world.commands();
+        var deferred = commands.spawn();
+        assert(world.containsEntity(deferred), "commands.spawn should reserve a valid id before apply");
+        assert(!world.isAlive(deferred), "commands.spawn id should stay unspawned before apply");
+        assert(world.getEntity(deferred) == null, "commands.spawn id should not be exposed by getEntity before apply");
+        assert(world.getEntityMut(deferred) == null, "commands.spawn id should not be exposed by getEntityMut before apply");
+
+        commands.apply();
+        assert(world.isAlive(deferred), "commands.spawn id should become alive after apply");
+        assert(world.getEntity(deferred) != null, "getEntity should expose id after deferred spawn apply");
+        assert(world.getEntityMut(deferred) != null, "getEntityMut should expose id after deferred spawn apply");
+    }
+
     static function testTypedEcsErrors():Void {
         var world = new World();
         var entity = world.spawn([new Position(1, 1)]);
         var other = world.spawn([new Velocity(2, 2)]);
+        var reserved = world.reserveEntity();
 
         var entityError:EntityDoesNotExistError = null;
         world.despawn(entity);
@@ -365,6 +500,35 @@ class EcsCoreTest {
         }
         assert(entityError != null, "world.entity should throw EntityDoesNotExistError");
         assertEq(entity.index, entityError.entity.index, "EntityDoesNotExistError should keep the failed entity");
+        assertEntityNotSpawnedKindInvalid(entityError.kind, "despawned entity should report Invalid kind");
+
+        var reservedError:EntityDoesNotExistError = null;
+        try {
+            world.entity(reserved);
+        } catch (error:EntityDoesNotExistError) {
+            reservedError = error;
+        }
+        assert(reservedError != null, "world.entity should reject reserved-unspawned entity");
+        assertEntityNotSpawnedKindValidButNotSpawned(reservedError.kind, "reserved entity should report ValidButNotSpawned kind");
+
+        var invalidSpawnError:SpawnError = null;
+        try {
+            world.spawnReserved(entity);
+        } catch (error:SpawnError) {
+            invalidSpawnError = error;
+        }
+        assert(invalidSpawnError != null, "spawnReserved should reject stale entity ids");
+        assertSpawnErrorKindInvalid(invalidSpawnError.kind, "spawnReserved on stale entity should report Invalid kind");
+
+        var alive = world.spawn();
+        var alreadySpawnedError:SpawnError = null;
+        try {
+            world.spawnReserved(alive);
+        } catch (error:SpawnError) {
+            alreadySpawnedError = error;
+        }
+        assert(alreadySpawnedError != null, "spawnReserved should reject already spawned ids");
+        assertSpawnErrorKindAlreadySpawned(alreadySpawnedError.kind, "spawnReserved on live entity should report AlreadySpawned kind");
 
         var resourceError:MissingResourceError = null;
         try {
@@ -384,13 +548,72 @@ class EcsCoreTest {
         assert(mismatchError != null, "Query.getMany should throw QueryDoesNotMatchError");
         assertEq(other.index, mismatchError.entity.index, "QueryDoesNotMatchError should keep the failed entity");
 
-        var singleError:QuerySingleMissingError = null;
+        var staleWorld = new World();
+        var stale = staleWorld.spawn([new Position(5, 5)]);
+        staleWorld.despawn(stale);
+        var staleQuery = staleWorld.query(Position);
+        var notSpawnedQueryError:QueryEntityNotSpawnedError = null;
+        try {
+            staleQuery.getMany([stale]);
+        } catch (error:QueryEntityNotSpawnedError) {
+            notSpawnedQueryError = error;
+        }
+        assert(notSpawnedQueryError != null, "Query.getMany should distinguish stale/unspawned entities from query mismatches");
+        assertEq(stale.index, notSpawnedQueryError.entity.index, "QueryEntityNotSpawnedError should keep the failed entity");
+        assertEntityNotSpawnedKindInvalid(notSpawnedQueryError.kind, "QueryEntityNotSpawnedError should preserve invalid/stale kind");
+
+        var singleError:QuerySingleNoEntitiesError = null;
         try {
             query.single();
-        } catch (error:QuerySingleMissingError) {
+        } catch (error:QuerySingleNoEntitiesError) {
             singleError = error;
         }
-        assert(singleError != null, "Query.single should throw QuerySingleMissingError when cardinality is not one");
+        assert(singleError != null, "Query.single should distinguish the no-entities case");
+        assertEq(QuerySingleKind.NoEntities, singleError.kind, "Query.single no-entities error should preserve kind");
+
+        var manyWorld = new World();
+        manyWorld.spawn([new Position(1, 1)]);
+        manyWorld.spawn([new Position(2, 2)]);
+        var manyQuery = manyWorld.query(Position);
+        var multipleError:QuerySingleMultipleEntitiesError = null;
+        try {
+            manyQuery.single();
+        } catch (error:QuerySingleMultipleEntitiesError) {
+            multipleError = error;
+        }
+        assert(multipleError != null, "Query.single should distinguish the multiple-entities case");
+        assertEq(QuerySingleKind.MultipleEntities, multipleError.kind, "Query.single multiple-entities error should preserve kind");
+    }
+
+    static function testTypeKeyTypedErrors():Void {
+        var emptyNameError:TypeKeyError = null;
+        try {
+            bevy.ecs.TypeKey.named("");
+        } catch (error:TypeKeyError) {
+            emptyNameError = error;
+        }
+        assert(emptyNameError != null, "TypeKey.named should throw typed error for empty names");
+        assertEq(TypeKeyErrorKind.EmptyName, emptyNameError.kind, "TypeKey.named should preserve EmptyName kind");
+
+        var noClassValueError:TypeKeyError = null;
+        try {
+            bevy.ecs.TypeKey.ofInstance(1);
+        } catch (error:TypeKeyError) {
+            noClassValueError = error;
+        }
+        assert(noClassValueError != null, "TypeKey.ofInstance should throw typed error for classless values");
+        assertEq(TypeKeyErrorKind.ValueWithoutClass, noClassValueError.kind, "TypeKey.ofInstance should preserve ValueWithoutClass kind");
+    }
+
+    static function testQueryFilterTypedErrors():Void {
+        var orError:QueryFilterError = null;
+        try {
+            Or.of([]);
+        } catch (error:QueryFilterError) {
+            orError = error;
+        }
+        assert(orError != null, "Or.of([]) should throw typed query-filter error");
+        assertEq(QueryFilterErrorKind.OrRequiresChildren, orError.kind, "Or.of([]) should preserve OrRequiresChildren kind");
     }
 
     static function assertEq<T>(expected:T, actual:T, label:String):Void {
@@ -402,6 +625,38 @@ class EcsCoreTest {
     static function assert(value:Bool, label:String):Void {
         if (!value) {
             throw label;
+        }
+    }
+
+    static function assertEntityNotSpawnedKindInvalid(kind:EntityNotSpawnedKind, label:String):Void {
+        switch kind {
+            case Invalid(_):
+            case ValidButNotSpawned:
+                throw label;
+        }
+    }
+
+    static function assertEntityNotSpawnedKindValidButNotSpawned(kind:EntityNotSpawnedKind, label:String):Void {
+        switch kind {
+            case ValidButNotSpawned:
+            case Invalid(_):
+                throw label;
+        }
+    }
+
+    static function assertSpawnErrorKindInvalid(kind:SpawnErrorKind, label:String):Void {
+        switch kind {
+            case Invalid(_):
+            case AlreadySpawned:
+                throw label;
+        }
+    }
+
+    static function assertSpawnErrorKindAlreadySpawned(kind:SpawnErrorKind, label:String):Void {
+        switch kind {
+            case AlreadySpawned:
+            case Invalid(_):
+                throw label;
         }
     }
 }

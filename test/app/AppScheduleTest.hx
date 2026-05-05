@@ -1,11 +1,15 @@
 package app;
 
 import bevy.app.App;
+import bevy.app.AppError;
+import bevy.app.AppError.AppErrorKind;
 import bevy.app.MainSchedule;
 import bevy.app.SystemConfig.SystemConfigBuilder;
 import bevy.app.SystemConfig.SystemSetConfigBuilder;
 import bevy.app.SystemClass;
 import bevy.app.SystemRegistry;
+import bevy.asset.Asset;
+import bevy.asset.Handle;
 import bevy.async.AsyncClass;
 import bevy.async.AsyncRuntime;
 import bevy.async.Future;
@@ -21,6 +25,14 @@ import bevy.ecs.Or;
 import bevy.ecs.Query;
 import bevy.ecs.Query.Query2;
 import bevy.ecs.Query.Query3;
+import bevy.ecs.Tuple.Tuple1;
+import bevy.ecs.Tuple.Tuple2;
+import bevy.ecs.Tuple.Tuple3;
+import bevy.ecs.Tuple.Tuple4;
+import bevy.ecs.Tuple.Tuple5;
+import bevy.ecs.Tuple.Tuple10;
+import bevy.ecs.Tuple.Tuple15;
+import bevy.ecs.Tuple.Tuple;
 import bevy.ecs.Res;
 import bevy.ecs.ResMut;
 import bevy.ecs.Resource;
@@ -34,12 +46,40 @@ class AppScheduleTest {
         testRunIfConditions();
         testSetOrderingAndConditions();
         testRuntimeBuilders();
+        testScheduleTypedErrors();
 
         var app = new App();
         app.world.insertResource(new Counter());
         app.world.insertResource(new ChangeStep(0));
-        app.world.spawn([new AppPosition(1), new AppVelocity(2), new AppTag()]);
+        app.world.spawn([
+            new AppPosition(1),
+            new AppVelocity(2),
+            new AppHealth(12),
+            new AppArmor(20),
+            new AppStatA(3),
+            new AppStatB(4),
+            new AppStatC(5),
+            new AppStatD(6),
+            new AppStatE(7),
+            new AppStatF(8),
+            new AppStatG(9),
+            new AppStatH(10),
+            new AppStatI(11),
+            new AppStatJ(13),
+            new AppTag()
+        ]);
         app.world.spawn([new AppPosition(5)]);
+        var handleAKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast AppAssetA]);
+        var handleBKey = bevy.ecs.TypeKey.ofParameterizedClass(Handle, [cast AppAssetB]);
+        app.world.spawn([
+            new Handle<AppAssetA>(101, handleAKey),
+            new Handle<AppAssetB>(201, handleBKey),
+            new HandleProbeTag()
+        ]);
+        app.world.spawn([
+            new Handle<AppAssetA>(102, handleAKey),
+            new HandleProbeTag()
+        ]);
         app.world.initEvents(AppSignal);
         app.addRegisteredSystems(MainSchedule.Update);
 
@@ -65,9 +105,47 @@ class AppScheduleTest {
         assertEq(3, app.world.getResource(QueryTotal).value, "Query2 param should read components");
         assertEq(1, app.world.getResource(QueryPairFilterCount).value, "Query2<DataA, DataB, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(QueryEntityPairCount).value, "Query2<Entity, Data> param should inject mixed entity/component queries");
+        assertEq(3, app.world.getResource(QueryTuplePairTotal).value, "Query<Tuple2<DataA, DataB>> should inject tuple query data");
+        assertEq(6, app.world.getResource(QueryTupleOneTotal).value, "Query<Tuple1<DataA>> should inject one-item tuple query data");
+        assertEq(1, app.world.getResource(QueryTupleHandlePairCount).value, "Query<Tuple2<Handle<A>, Handle<B>>> should inject generic tuple query data");
+        assertEq(302, app.world.getResource(QueryTupleHandlePairIdTotal).value, "Query<Tuple2<Handle<A>, Handle<B>>> should preserve typed handle ids");
+        assertEq(1, app.world.getResource(QueryTupleHandleFilterCount).value, "Query<Tuple..., With<Handle<B>>> should honor generic filter keys");
         assertEq(3, app.world.getResource(QueryTripleTotal).value, "Query3 param should read three-component tuples");
         assertEq(1, app.world.getResource(QueryTripleFilterCount).value, "Query3<DataA, DataB, DataC, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(QueryEntityTripleCount).value, "Query3<Entity, DataA, DataB> param should inject mixed entity/component queries");
+        assertEq(1, app.world.getResource(QueryTupleTripleFilterCount).value, "Query<Tuple3<DataA, DataB, DataC>, Filter> should respect tuple query filters");
+        assertEq(15, app.world.getResource(QueryTupleFourTotal).value, "Query<Tuple4<...>> should inject four-item tuple query data");
+        assertEq(35, app.world.getResource(QueryTupleFiveTotal).value, "Query<Tuple5<...>> should inject five-item tuple query data");
+        assertEq(60, app.world.getResource(QueryTupleTenTotal).value, "Query<Tuple10<...>> should inject higher-arity tuple query data");
+        assertEq(111, app.world.getResource(QueryTupleFifteenTotal).value, "Query<Tuple15<...>> should inject fifteen-item tuple query data");
+        assertEq(3, app.world.getResource(QueryTupleGenericTotal).value, "Query<Tuple<...>> should inject tuple query data without fixed-arity type names");
+        assertEq(1, app.world.getResource(QueryTupleGenericEntityPairCount).value, "Query<Tuple<Entity, Data>, Filter> should inject mixed generic tuple data");
+        assertEq(1, app.world.getResource(QueryTupleGenericFilterCount).value, "Query<Tuple<...>, With<T>> should honor generic tuple query filters");
+        assertEq(1, app.world.getResource(QueryTupleGenericAddedFirst).value, "Query<Tuple<...>, Added<T>> should see first-run additions");
+        var tupleGenericAddedSecond = app.world.getResource(QueryTupleGenericAddedSecond);
+        assertEq(0, tupleGenericAddedSecond == null ? 0 : tupleGenericAddedSecond.value, "Query<Tuple<...>, Added<T>> should stop matching after first run");
+        assertEq(1, app.world.getResource(QueryTupleGenericChangedFirst).value, "Query<Tuple<...>, Changed<T>> should include startup inserts on first run");
+        assertEq(1, app.world.getResource(QueryTupleGenericChangedSecond).value, "Query<Tuple<...>, Changed<T>> should include later tuple component mutations");
+        assertEq(1, app.world.getResource(QueryTupleGenericCompositeOrCount).value, "Query<Tuple<...>, Or<...>> should compose generic tuple filters at runtime");
+        assertEq(0, app.world.getResource(QueryTupleGenericCompositeAllCount).value, "Query<Tuple<...>, All<...>> should compose generic tuple filters at runtime");
+        assertEq(1, app.world.getResource(QueryTupleGenericAddedCompositeOrFirst).value, "Query<Tuple<...>, Or<Added<T>, ...>> should include startup additions on first run");
+        assertEq(0, app.world.getResource(QueryTupleGenericAddedCompositeOrSecond).value, "Query<Tuple<...>, Or<Added<T>, ...>> should stop matching once additions are stale");
+        assertEq(1, app.world.getResource(QueryTupleGenericChangedCompositeOrFirst).value, "Query<Tuple<...>, Or<Changed<T>, ...>> should include startup inserts on first run");
+        assertEq(1, app.world.getResource(QueryTupleGenericChangedCompositeOrSecond).value, "Query<Tuple<...>, Or<Changed<T>, ...>> should include later tuple component mutations");
+        assertEq(1, app.world.getResource(QueryTupleGenericHandlePairCount).value, "Query<Tuple<Handle<A>, Handle<B>>> should inject generic tuple data");
+        assertEq(302, app.world.getResource(QueryTupleGenericHandlePairIdTotal).value, "Query<Tuple<Handle<A>, Handle<B>>> should preserve parameterized handle ids");
+        assertEq(1, app.world.getResource(QueryTupleGenericHandleFilterCount).value, "Query<Tuple<...>, With<Handle<B>>> should honor generic handle filter keys");
+        assertEq(1, app.world.getResource(QueryTupleCompositeOrCount).value, "Query<Tuple..., Or<...>> should compose tuple-query filters at runtime");
+        assertEq(0, app.world.getResource(QueryTupleCompositeAllCount).value, "Query<Tuple..., All<...>> should compose tuple-query filters at runtime");
+        assertEq(1, app.world.getResource(QueryTupleAddedFirst).value, "Query<Tuple..., Added<T>> should see first-run additions");
+        var tupleAddedSecond = app.world.getResource(QueryTupleAddedSecond);
+        assertEq(0, tupleAddedSecond == null ? 0 : tupleAddedSecond.value, "Query<Tuple..., Added<T>> should stop matching after first run");
+        assertEq(1, app.world.getResource(QueryTupleAddedCompositeOrFirst).value, "Query<Tuple..., Or<Added<T>, ...>> should include startup additions on first run");
+        assertEq(0, app.world.getResource(QueryTupleAddedCompositeOrSecond).value, "Query<Tuple..., Or<Added<T>, ...>> should stop matching once additions are stale");
+        assertEq(1, app.world.getResource(QueryTupleChangedFirst).value, "Query<Tuple..., Changed<T>> should include startup inserts on first run");
+        assertEq(1, app.world.getResource(QueryTupleChangedSecond).value, "Query<Tuple..., Changed<T>> should include later tuple component mutations");
+        assertEq(1, app.world.getResource(QueryTupleChangedCompositeOrFirst).value, "Query<Tuple..., Or<Changed<T>, ...>> should include startup inserts on first run");
+        assertEq(1, app.world.getResource(QueryTupleChangedCompositeOrSecond).value, "Query<Tuple..., Or<Changed<T>, ...>> should include later tuple component mutations");
         assertEq(1, app.world.getResource(FilterCount).value, "Query<Data, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(TaggedEntityCount).value, "Query<Entity, Filter> param should inject entity-only queries");
         assertEq(2, app.world.getResource(OrFilterCount).value, "Query<Data, Or<...>> param should compose filters");
@@ -174,6 +252,120 @@ class AppScheduleTest {
         assertEq("first,third", app.world.getResource(BuilderTrace).values.join(","), "runtime system/set builders should enforce ordering and conditions");
     }
 
+    static function testScheduleTypedErrors():Void {
+        testScheduleOrderingCycleError();
+        testScheduleOrderingMissingTargetError();
+        testScheduleSetEmptyNameError();
+        testScheduleSetHasNoSystemsError();
+        testScheduleRunIfNotBoolError();
+    }
+
+    static function testScheduleOrderingCycleError():Void {
+        var app = new App();
+        app.addSystemConfig(MainSchedule.PreUpdate, SystemConfigBuilder.named("cycle.a", function(_) return null).after("cycle.b"));
+        app.addSystemConfig(MainSchedule.PreUpdate, SystemConfigBuilder.named("cycle.b", function(_) return null).after("cycle.a"));
+
+        var typedError:AppError = null;
+        try {
+            app.runSchedule(MainSchedule.PreUpdate);
+        } catch (error:AppError) {
+            typedError = error;
+        }
+        assert(typedError != null, "cycle should throw typed schedule error");
+        switch typedError.kind {
+            case ScheduleOrderingCycle(scheduleLabel):
+                assertEq(MainSchedule.PreUpdate, scheduleLabel, "cycle error should keep schedule label");
+            default:
+                throw "unexpected cycle typed error kind";
+        }
+    }
+
+    static function testScheduleOrderingMissingTargetError():Void {
+        var app = new App();
+        app.addSystemConfig(MainSchedule.PreUpdate, SystemConfigBuilder.named("missing.target", function(_) return null).after("missing.other"));
+        app.addSystemConfig(MainSchedule.PreUpdate, SystemConfigBuilder.named("missing.anchor", function(_) return null));
+
+        var typedError:AppError = null;
+        try {
+            app.runSchedule(MainSchedule.PreUpdate);
+        } catch (error:AppError) {
+            typedError = error;
+        }
+        assert(typedError != null, "missing ordering target should throw typed schedule error");
+        switch typedError.kind {
+            case ScheduleOrderingSourceMissing(scheduleLabel, source):
+                assertEq(MainSchedule.PreUpdate, scheduleLabel, "missing-target error should keep schedule label");
+                assertEq("missing.other", source, "missing-target error should keep missing system name");
+            default:
+                throw "unexpected missing-target typed error kind";
+        }
+    }
+
+    static function testScheduleSetEmptyNameError():Void {
+        var app = new App();
+        var typedError:AppError = null;
+        try {
+            app.configureSet(MainSchedule.Update, SystemSetConfigBuilder.named(""));
+        } catch (error:AppError) {
+            typedError = error;
+        }
+        assert(typedError != null, "empty set name should throw typed schedule error");
+        switch typedError.kind {
+            case ScheduleSetEmptyName(scheduleLabel):
+                assertEq(MainSchedule.Update, scheduleLabel, "empty-name error should keep schedule label");
+            default:
+                throw "unexpected empty-set typed error kind";
+        }
+    }
+
+    static function testScheduleSetHasNoSystemsError():Void {
+        var app = new App();
+        app.configureSet(MainSchedule.Update, SystemSetConfigBuilder.named("lonely_set").after("other_set"));
+        app.configureSet(MainSchedule.Update, SystemSetConfigBuilder.named("other_set"));
+        app.addSystemConfig(MainSchedule.Update, SystemConfigBuilder.named("set.guard.a", function(_) return null));
+        app.addSystemConfig(MainSchedule.Update, SystemConfigBuilder.named("set.guard.b", function(_) return null));
+
+        var typedError:AppError = null;
+        try {
+            app.runSchedule(MainSchedule.Update);
+        } catch (error:AppError) {
+            typedError = error;
+        }
+        assert(typedError != null, "set without members should throw typed schedule error");
+        switch typedError.kind {
+            case ScheduleSetHasNoSystems(scheduleLabel, setName):
+                assertEq(MainSchedule.Update, scheduleLabel, "set-has-no-systems error should keep schedule label");
+                assertEq("lonely_set", setName, "set-has-no-systems error should keep set name");
+            default:
+                throw "unexpected set-has-no-systems typed error kind";
+        }
+    }
+
+    static function testScheduleRunIfNotBoolError():Void {
+        var app = new App();
+        app.addSystemConfig(MainSchedule.First, SystemConfigBuilder.named("bad.run_if", function(_) return null).runIf(function(_) return 1));
+
+        var typedError:AppError = null;
+        app.runSchedule(MainSchedule.First).handle(function(_) {
+            throw "run_if non-bool should not resolve successfully";
+        }, function(error) {
+            if (Std.isOfType(error, AppError)) {
+                typedError = cast error;
+                return;
+            }
+            throw error;
+        });
+        AsyncRuntime.flush();
+
+        assert(typedError != null, "run_if non-bool should reject with typed schedule error");
+        switch typedError.kind {
+            case ScheduleRunIfNotBool(scheduleLabel):
+                assertEq(MainSchedule.First, scheduleLabel, "run_if-not-bool error should keep schedule label");
+            default:
+                throw "unexpected run_if-not-bool typed error kind";
+        }
+    }
+
     static function assertEq<T>(expected:T, actual:T, label:String):Void {
         if (expected != actual) {
             throw '$label expected $expected, got $actual';
@@ -248,6 +440,41 @@ class QueryEntityPairCount implements Resource {
     }
 }
 
+class QueryTuplePairTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleOneTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHandlePairCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHandlePairIdTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleHandleFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class QueryTripleTotal implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -268,6 +495,224 @@ class QueryEntityTripleCount implements Resource {
         this.value = value;
     }
 }
+
+class QueryTupleTripleFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleFourTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleFiveTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleTenTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleFifteenTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericEntityPairCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericAddedFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericAddedSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericChangedFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericChangedSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericCompositeOrCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericCompositeAllCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericAddedCompositeOrFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericAddedCompositeOrSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericChangedCompositeOrFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericChangedCompositeOrSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericHandlePairCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericHandlePairIdTotal implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleGenericHandleFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleCompositeOrCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleCompositeAllCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleAddedFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleAddedSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleAddedCompositeOrFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleAddedCompositeOrSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleChangedFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleChangedSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleChangedCompositeOrFirst implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryTupleChangedCompositeOrSecond implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 
 class FilterCount implements Resource {
     public var value:Int;
@@ -421,11 +866,107 @@ class AppTag implements Component {
     public function new() {}
 }
 
+class HandleProbeTag implements Component {
+    public function new() {}
+}
+
+class AppHealth implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppArmor implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatA implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatB implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatC implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatD implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatE implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatF implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatG implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatH implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatI implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class AppStatJ implements Component {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class AppSignal implements Event {
     public var value:String;
     public function new(value:String) {
         this.value = value;
     }
+}
+
+class AppAssetA implements Asset {
+    public function new() {}
+}
+
+class AppAssetB implements Asset {
+    public function new() {}
 }
 
 class ChangeStep implements Resource {
@@ -551,6 +1092,41 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    public static function tuplePairQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            total += item.component._0.value + item.component._1.value;
+        }
+        commands.insertResource(new QueryTuplePairTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleOneQuerySystem(query:Query<Tuple1<AppPosition>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            total += item.component._0.value;
+        }
+        commands.insertResource(new QueryTupleOneTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleGenericHandlePairQuerySystem(query:Query<Tuple2<Handle<AppAssetA>, Handle<AppAssetB>>, With<HandleProbeTag>>, commands:Commands):Void {
+        var count = 0;
+        var total = 0;
+        for (item in query.toArray()) {
+            count++;
+            total += item.component._0.id + item.component._1.id;
+        }
+        commands.insertResource(new QueryTupleHandlePairCount(count));
+        commands.insertResource(new QueryTupleHandlePairIdTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleGenericHandleFilterQuerySystem(query:Query<Tuple2<Handle<AppAssetA>, HandleProbeTag>, With<Handle<AppAssetB>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleHandleFilterCount(query.toArray().length));
+    }
+
+    @:system("Update")
     public static function tripleQuerySystem(query:Query3<AppPosition, AppVelocity, AppTag>, commands:Commands):Void {
         commands.insertResource(new QueryTripleTotal(query.toArray().length * 3));
     }
@@ -569,6 +1145,232 @@ class CounterSystems implements SystemClass implements AsyncClass {
             }
         }
         commands.insertResource(new QueryEntityTripleCount(count));
+    }
+
+    @:system("Update")
+    public static function tupleTripleFilteredQuerySystem(query:Query<Tuple3<bevy.ecs.Entity, AppPosition, AppVelocity>, With<AppTag>>, commands:Commands):Void {
+        var count = 0;
+        for (item in query.toArray()) {
+            if (item.entity.index == item.component._0.index && item.component._1.value > 0 && item.component._2.value > 0) {
+                count++;
+            }
+        }
+        commands.insertResource(new QueryTupleTripleFilterCount(count));
+    }
+
+    @:system("Update")
+    public static function tupleFourQuerySystem(query:Query<Tuple4<bevy.ecs.Entity, AppPosition, AppVelocity, AppHealth>, With<AppTag>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            var tuple = item.component;
+            if (item.entity.index == tuple._0.index) {
+                total += tuple._1.value + tuple._2.value + tuple._3.value;
+            }
+        }
+        commands.insertResource(new QueryTupleFourTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleFiveQuerySystem(query:Query<Tuple5<bevy.ecs.Entity, AppPosition, AppVelocity, AppHealth, AppArmor>, With<AppTag>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            var tuple = item.component;
+            if (item.entity.index == tuple._0.index) {
+                total += tuple._1.value + tuple._2.value + tuple._3.value + tuple._4.value;
+            }
+        }
+        commands.insertResource(new QueryTupleFiveTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleTenQuerySystem(query:Query<Tuple10<bevy.ecs.Entity, AppPosition, AppVelocity, AppHealth, AppArmor, AppStatA, AppStatB, AppStatC, AppStatD, AppStatE>, With<AppTag>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            var tuple = item.component;
+            if (item.entity.index == tuple._0.index) {
+                total += tuple._1.value
+                    + tuple._2.value
+                    + tuple._3.value
+                    + tuple._4.value
+                    + tuple._5.value
+                    + tuple._6.value
+                    + tuple._7.value
+                    + tuple._8.value
+                    + tuple._9.value;
+            }
+        }
+        commands.insertResource(new QueryTupleTenTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleFifteenQuerySystem(query:Query<Tuple15<bevy.ecs.Entity, AppPosition, AppVelocity, AppHealth, AppArmor, AppStatA, AppStatB, AppStatC, AppStatD, AppStatE, AppStatF, AppStatG, AppStatH, AppStatI, AppStatJ>, With<AppTag>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            var tuple = item.component;
+            if (item.entity.index == tuple._0.index) {
+                total += tuple._1.value
+                    + tuple._2.value
+                    + tuple._3.value
+                    + tuple._4.value
+                    + tuple._5.value
+                    + tuple._6.value
+                    + tuple._7.value
+                    + tuple._8.value
+                    + tuple._9.value
+                    + tuple._10.value
+                    + tuple._11.value
+                    + tuple._12.value
+                    + tuple._13.value
+                    + tuple._14.value;
+            }
+        }
+        commands.insertResource(new QueryTupleFifteenTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleGenericQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>>, commands:Commands):Void {
+        var total = 0;
+        for (item in query.toArray()) {
+            total += item.component._0.value + item.component._1.value;
+        }
+        commands.insertResource(new QueryTupleGenericTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleGenericEntityPairQuerySystem(query:Query<Tuple<bevy.ecs.Entity, AppPosition>, With<AppTag>>, commands:Commands):Void {
+        var count = 0;
+        for (item in query.toArray()) {
+            if (item.entity.index == item.component._0.index && item.component._1.value > 0) {
+                count++;
+            }
+        }
+        commands.insertResource(new QueryTupleGenericEntityPairCount(count));
+    }
+
+    @:system("Update")
+    public static function tupleGenericFilteredQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, With<AppTag>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleGenericFilterCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleGenericAddedQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, Added<AppTag>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value == 0) {
+            commands.insertResource(new QueryTupleGenericAddedFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleGenericAddedSecond(count));
+        }
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function tupleGenericChangedQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, Changed<AppPosition>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value <= 1) {
+            commands.insertResource(new QueryTupleGenericChangedFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleGenericChangedSecond(count));
+        }
+    }
+
+    @:system("Update")
+    public static function tupleGenericCompositeOrQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, Or<With<AppTag>, Without<AppHealth>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleGenericCompositeOrCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleGenericCompositeAllQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, All<Without<AppTag>, Without<AppHealth>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleGenericCompositeAllCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleGenericAddedCompositeOrQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, Or<Added<AppTag>, Without<AppHealth>>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value == 0) {
+            commands.insertResource(new QueryTupleGenericAddedCompositeOrFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleGenericAddedCompositeOrSecond(count));
+        }
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function tupleGenericChangedCompositeOrQuerySystem(query:Query<Tuple<AppPosition, AppVelocity>, Or<Changed<AppPosition>, Without<AppHealth>>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value <= 1) {
+            commands.insertResource(new QueryTupleGenericChangedCompositeOrFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleGenericChangedCompositeOrSecond(count));
+        }
+    }
+
+    @:system("Update")
+    public static function tupleUniversalHandlePairQuerySystem(query:Query<Tuple<Handle<AppAssetA>, Handle<AppAssetB>>, With<HandleProbeTag>>, commands:Commands):Void {
+        var count = 0;
+        var total = 0;
+        for (item in query.toArray()) {
+            count++;
+            total += item.component._0.id + item.component._1.id;
+        }
+        commands.insertResource(new QueryTupleGenericHandlePairCount(count));
+        commands.insertResource(new QueryTupleGenericHandlePairIdTotal(total));
+    }
+
+    @:system("Update")
+    public static function tupleUniversalHandleFilterQuerySystem(query:Query<Tuple<Handle<AppAssetA>, HandleProbeTag>, With<Handle<AppAssetB>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleGenericHandleFilterCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleCompositeOrQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, Or<With<AppTag>, Without<AppHealth>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleCompositeOrCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleCompositeAllQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, All<Without<AppTag>, Without<AppHealth>>>, commands:Commands):Void {
+        commands.insertResource(new QueryTupleCompositeAllCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function tupleAddedQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, Added<AppTag>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value == 0) {
+            commands.insertResource(new QueryTupleAddedFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleAddedSecond(count));
+        }
+    }
+
+    @:system("Update")
+    public static function tupleAddedCompositeOrQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, Or<Added<AppTag>, Without<AppHealth>>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value == 0) {
+            commands.insertResource(new QueryTupleAddedCompositeOrFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleAddedCompositeOrSecond(count));
+        }
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function tupleChangedQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, Changed<AppPosition>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value <= 1) {
+            commands.insertResource(new QueryTupleChangedFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleChangedSecond(count));
+        }
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function tupleChangedCompositeOrQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>, Or<Changed<AppPosition>, Without<AppHealth>>>, step:Res<ChangeStep>, commands:Commands):Void {
+        var count = query.toArray().length;
+        if (step.value.value <= 1) {
+            commands.insertResource(new QueryTupleChangedCompositeOrFirst(count));
+        } else {
+            commands.insertResource(new QueryTupleChangedCompositeOrSecond(count));
+        }
     }
 
     @:system("Update")

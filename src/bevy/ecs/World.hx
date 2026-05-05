@@ -2,8 +2,12 @@ package bevy.ecs;
 
 import bevy.ecs.EcsError.EntityDoesNotExistError;
 import bevy.ecs.EcsError.EntityNotAliveError;
+import bevy.ecs.EcsError.EntityAlreadySpawnedError;
+import bevy.ecs.EcsError.EntityNotSpawnedKind;
 import bevy.ecs.EcsError.MissingResourceError;
 import bevy.ecs.EcsError.ResourceInitError;
+import bevy.ecs.EcsError.SpawnError;
+import bevy.ecs.EcsError.SpawnErrorKind;
 import bevy.ecs.Entity.EntityLocation;
 import bevy.ecs.Entity.EntityRef;
 import bevy.ecs.Entity.EntityWorldMut;
@@ -36,22 +40,52 @@ class World {
         addedComponents = new Map();
     }
 
-    public function spawn(?bundle:Array<Dynamic>):Entity {
+    public function reserveEntity():Entity {
         var index:Int;
         var generation:Int;
         if (freeIndices.length > 0) {
             index = freeIndices.pop();
             var location = entities[index];
-            location.alive = true;
             generation = location.generation;
+            location.alive = false;
         } else {
             index = entities.length;
             generation = 1;
-            entities.push(new EntityLocation(generation, true));
+            entities.push(new EntityLocation(generation, false));
+        }
+        return new Entity(index, generation);
+    }
+
+    public function reserveEntities(count:Int):Array<Entity> {
+        var result:Array<Entity> = [];
+        if (count <= 0) {
+            return result;
+        }
+        for (_ in 0...count) {
+            result.push(reserveEntity());
+        }
+        return result;
+    }
+
+    public function spawn(?bundle:Array<Dynamic>):Entity {
+        return spawnReserved(reserveEntity(), bundle);
+    }
+
+    public function spawnReserved(entity:Entity, ?bundle:Array<Dynamic>):Entity {
+        var location = entityLocation(entity);
+        if (location == null || location.generation != entity.generation) {
+            throw new SpawnError(entity, SpawnErrorKind.Invalid(currentGenerationForEntity(entity)));
+        }
+        if (location.alive) {
+            throw new EntityAlreadySpawnedError(entity);
         }
 
-        var entity = new Entity(index, generation);
-        components.set(index, new Map());
+        location.alive = true;
+        var storage = components.get(entity.index);
+        if (storage == null) {
+            storage = new Map();
+            components.set(entity.index, storage);
+        }
         if (bundle != null) {
             for (component in bundle) {
                 insert(entity, component);
@@ -64,18 +98,32 @@ class World {
         return spawn(bundle.toBundle());
     }
 
+    public function spawnBatch(bundles:Array<Bundle>):Array<Entity> {
+        var result:Array<Entity> = [];
+        if (bundles == null || bundles.length == 0) {
+            return result;
+        }
+        var reserved = reserveEntities(bundles.length);
+        for (i in 0...bundles.length) {
+            result.push(spawnReserved(reserved[i], bundles[i].toBundle()));
+        }
+        return result;
+    }
+
     public function spawnEmpty():EntityWorldMut {
         return new EntityWorldMut(this, spawn());
     }
 
     public function despawn(entity:Entity):Bool {
-        if (!isAlive(entity)) {
+        var location = entityLocation(entity);
+        if (location == null || location.generation != entity.generation) {
             return false;
         }
-        var location = entities[entity.index];
+        if (location.alive) {
+            components.remove(entity.index);
+        }
         location.alive = false;
         location.generation++;
-        components.remove(entity.index);
         freeIndices.push(entity.index);
         return true;
     }
@@ -89,7 +137,11 @@ class World {
     }
 
     public function containsEntity(entity:Entity):Bool {
-        return isAlive(entity);
+        if (entity == null) {
+            return false;
+        }
+        var location = entityLocation(entity);
+        return location != null && location.generation == entity.generation;
     }
 
     public function getEntity(entity:Entity):Null<EntityRef> {
@@ -99,7 +151,7 @@ class World {
     public function entity(entity:Entity):EntityRef {
         var value = getEntity(entity);
         if (value == null) {
-            throw new EntityDoesNotExistError(entity);
+            throw new EntityDoesNotExistError(entity, entityNotSpawnedKind(entity));
         }
         return value;
     }
@@ -111,7 +163,7 @@ class World {
     public function entityMut(entity:Entity):EntityWorldMut {
         var value = getEntityMut(entity);
         if (value == null) {
-            throw new EntityDoesNotExistError(entity);
+            throw new EntityDoesNotExistError(entity, entityNotSpawnedKind(entity));
         }
         return value;
     }
@@ -262,6 +314,62 @@ class World {
                 c: cEntityData ? cast entity : cast storage.get(resolvedCKey)
             });
         }
+        return result;
+    }
+
+    @:allow(bevy.ecs.Query)
+    private function queryTuple(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>):Array<{entity:Entity, components:Array<Any>}> {
+        var result:Array<{entity:Entity, components:Array<Any>}> = [];
+        if (items == null || items.length == 0) {
+            return result;
+        }
+
+        var entityData:Array<Bool> = [];
+        var resolvedKeys:Array<Null<String>> = [];
+        for (i in 0...items.length) {
+            var cls = items[i];
+            var isEntityData = isEntityClass(cast cls);
+            entityData.push(isEntityData);
+            if (isEntityData) {
+                resolvedKeys.push(null);
+                continue;
+            }
+            var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
+            resolvedKeys.push(componentLookupKey(cast cls, explicitKey));
+        }
+
+        for (index => storage in components) {
+            var entity = entityForIndex(index);
+            if (entity == null || !matchesFilters(entity, storage, filters)) {
+                continue;
+            }
+
+            var values:Array<Any> = [];
+            var matched = true;
+            for (i in 0...items.length) {
+                if (entityData[i]) {
+                    values.push(entity);
+                    continue;
+                }
+
+                var key = resolvedKeys[i];
+                if (!storage.exists(key)) {
+                    matched = false;
+                    break;
+                }
+                values.push(storage.get(key));
+            }
+
+            if (!matched) {
+                continue;
+            }
+
+            result.push({
+                entity: entity,
+                components: values
+            });
+        }
+
         return result;
     }
 
@@ -443,6 +551,13 @@ class World {
         return new Entity(index, location.generation);
     }
 
+    private function entityLocation(entity:Entity):Null<EntityLocation> {
+        if (entity == null || entity.index < 0 || entity.index >= entities.length) {
+            return null;
+        }
+        return entities[entity.index];
+    }
+
     private function matchesFilters(entity:Entity, storage:Map<String, Dynamic>, filters:Array<bevy.ecs.QueryFilter>):Bool {
         for (filter in filters) {
             if (!matchesFilterNode(entity, storage, filter.node())) {
@@ -488,8 +603,23 @@ class World {
 
     private function assertAlive(entity:Entity):Void {
         if (!isAlive(entity)) {
-            throw new EntityNotAliveError(entity);
+            throw new EntityNotAliveError(entity, entityNotSpawnedKind(entity));
         }
+    }
+
+    private function entityNotSpawnedKind(entity:Entity):EntityNotSpawnedKind {
+        var location = entityLocation(entity);
+        if (location == null || location.generation != entity.generation) {
+            return EntityNotSpawnedKind.Invalid(currentGenerationForEntity(entity));
+        }
+        return EntityNotSpawnedKind.ValidButNotSpawned;
+    }
+
+    private function currentGenerationForEntity(entity:Entity):Null<Int> {
+        if (entity == null || entity.index < 0 || entity.index >= entities.length) {
+            return null;
+        }
+        return entities[entity.index].generation;
     }
 
     private function componentChangeKey(entity:Entity, typeKey:String):String {

@@ -1,5 +1,7 @@
 package bevy.ecs;
 
+import bevy.ecs.EcsError.QueryFilterError;
+import bevy.ecs.EcsError.QueryFilterErrorKind;
 import bevy.ecs.QueryFilter.QueryFilterNode;
 
 class Or<A:QueryFilter, B:QueryFilter = bevy.ecs.QueryFilter, C:QueryFilter = bevy.ecs.QueryFilter, D:QueryFilter = bevy.ecs.QueryFilter> implements QueryFilter {
@@ -7,7 +9,7 @@ class Or<A:QueryFilter, B:QueryFilter = bevy.ecs.QueryFilter, C:QueryFilter = be
 
     public function new(filters:Array<QueryFilter>) {
         if (filters == null || filters.length == 0) {
-            throw "Or filter requires at least one child filter";
+            throw new QueryFilterError(QueryFilterErrorKind.OrRequiresChildren);
         }
         this.filters = filters.copy();
     }

@@ -11,6 +11,8 @@ import bevy.app.PluginsState;
 import bevy.app.SystemConfig.SystemConfigBuilder;
 import bevy.app.SystemConfig.SystemSetConfigBuilder;
 import bevy.app.SystemRegistry.SystemRunner;
+import bevy.app.AppError;
+import bevy.app.AppError.AppErrorKind;
 
 typedef AppRunner = App->Future<Dynamic>;
 
@@ -287,7 +289,7 @@ class App {
         var name = PluginTools.name(plugin);
         for (existing in plugins) {
             if (PluginTools.isUnique(existing) && PluginTools.name(existing) == name) {
-                throw 'Plugin already added: $name';
+                throw new AppError(AppErrorKind.PluginAlreadyAdded(name));
             }
         }
     }

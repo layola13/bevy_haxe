@@ -1,5 +1,7 @@
 package bevy.app;
 
+import bevy.app.AppError;
+import bevy.app.AppError.AppErrorKind;
 import bevy.app.Plugin.PluginTools;
 
 private typedef PluginGroupEntry = {
@@ -37,7 +39,7 @@ class PluginGroupBuilder implements PluginGroup {
 
     public function set<T:Plugin>(plugin:T):PluginGroupBuilder {
         if (!trySet(plugin)) {
-            throw 'Plugin does not exist in group $groupName: ${typeKeyForPlugin(plugin)}';
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForPlugin(plugin)));
         }
         return this;
     }
@@ -83,7 +85,7 @@ class PluginGroupBuilder implements PluginGroup {
     public function addBefore<Target:Plugin>(target:Class<Target>, plugin:Plugin):PluginGroupBuilder {
         var index = indexOf(target);
         if (index < 0) {
-            throw 'Plugin does not exist in group $groupName: ${typeKeyForClass(target)}';
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(target)));
         }
         upsert(plugin, index);
         return this;
@@ -113,7 +115,7 @@ class PluginGroupBuilder implements PluginGroup {
     public function addAfter<Target:Plugin>(target:Class<Target>, plugin:Plugin):PluginGroupBuilder {
         var index = indexOf(target);
         if (index < 0) {
-            throw 'Plugin does not exist in group $groupName: ${typeKeyForClass(target)}';
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(target)));
         }
         upsert(plugin, index + 1);
         return this;
@@ -143,7 +145,7 @@ class PluginGroupBuilder implements PluginGroup {
     public function disable<T:Plugin>(cls:Class<T>):PluginGroupBuilder {
         var index = indexOf(cls);
         if (index < 0) {
-            throw 'Plugin does not exist in group $groupName: ${typeKeyForClass(cls)}';
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(cls)));
         }
         plugins[index].enabled = false;
         return this;
@@ -152,7 +154,7 @@ class PluginGroupBuilder implements PluginGroup {
     public function enable<T:Plugin>(cls:Class<T>):PluginGroupBuilder {
         var index = indexOf(cls);
         if (index < 0) {
-            throw 'Plugin does not exist in group $groupName: ${typeKeyForClass(cls)}';
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(cls)));
         }
         plugins[index].enabled = true;
         return this;
@@ -164,7 +166,7 @@ class PluginGroupBuilder implements PluginGroup {
                 try {
                     app.addPlugin(entry.plugin);
                 } catch (error:Dynamic) {
-                    throw 'Error adding plugin ${PluginTools.name(entry.plugin)} in group $groupName: $error';
+                    throw new AppError(AppErrorKind.PluginGroupAddFailed(groupName, PluginTools.name(entry.plugin), error));
                 }
             }
         }
@@ -210,7 +212,7 @@ class PluginGroupBuilder implements PluginGroup {
     private static function typeKeyForPlugin(plugin:Plugin):String {
         var cls = Type.getClass(plugin);
         if (cls == null) {
-            throw 'Plugin must have a runtime class: ${Std.string(plugin)}';
+            throw new AppError(AppErrorKind.PluginWithoutRuntimeClass(Std.string(plugin)));
         }
         return typeKeyForClass(cast cls);
     }
@@ -218,7 +220,7 @@ class PluginGroupBuilder implements PluginGroup {
     private static function typeKeyForClass<T>(cls:Class<T>):String {
         var name = Type.getClassName(cls);
         if (name == null) {
-            throw "Plugin class name is unavailable";
+            throw new AppError(AppErrorKind.PluginClassNameUnavailable);
         }
         return name;
     }

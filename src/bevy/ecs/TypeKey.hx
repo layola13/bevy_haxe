@@ -1,10 +1,13 @@
 package bevy.ecs;
 
+import bevy.ecs.EcsError.TypeKeyError;
+import bevy.ecs.EcsError.TypeKeyErrorKind;
+
 class TypeKey {
     public static function ofClass<T>(cls:Class<T>):String {
         var name = Type.getClassName(cls);
         if (name == null) {
-            throw "Cannot derive a TypeKey for an anonymous class";
+            throw new TypeKeyError(TypeKeyErrorKind.AnonymousClass);
         }
         return name;
     }
@@ -12,14 +15,14 @@ class TypeKey {
     public static function ofInstance(value:Dynamic):String {
         var cls = Type.getClass(value);
         if (cls == null) {
-            throw "Cannot derive a TypeKey for a value without a class";
+            throw new TypeKeyError(TypeKeyErrorKind.ValueWithoutClass);
         }
         return ofClass(cls);
     }
 
     public static function named(name:String):String {
         if (name == null || name == "") {
-            throw "TypeKey name must not be empty";
+            throw new TypeKeyError(TypeKeyErrorKind.EmptyName);
         }
         return name;
     }
