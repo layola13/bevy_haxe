@@ -636,7 +636,7 @@ class SystemMacro {
         var dataKeys:Array<String> = [];
         switch path.params[0] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("System Query data parameter must be a class path", pos);
         }
@@ -660,13 +660,13 @@ class SystemMacro {
         var dataKeys:Array<String> = [];
         switch path.params[0] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("Query2 first parameter must be a class path", pos);
         }
         switch path.params[1] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("Query2 second parameter must be a class path", pos);
         }
@@ -690,19 +690,19 @@ class SystemMacro {
         var dataKeys:Array<String> = [];
         switch path.params[0] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("Query3 first parameter must be a class path", pos);
         }
         switch path.params[1] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("Query3 second parameter must be a class path", pos);
         }
         switch path.params[2] {
             case TPType(TPath(inner)):
-                dataKeys.push(typePathStorageKey(inner, pos));
+                pushQueryDataKey(dataKeys, inner, pos);
             default:
                 Context.error("Query3 third parameter must be a class path", pos);
         }
@@ -1103,6 +1103,18 @@ class SystemMacro {
             params.push(typeParamStorageKey(param, pos));
         }
         return base + "<" + params.join(",") + ">";
+    }
+
+    static function pushQueryDataKey(into:Array<String>, path:TypePath, pos:Position):Void {
+        if (isEntityTypePath(path)) {
+            return;
+        }
+        into.push(typePathStorageKey(path, pos));
+    }
+
+    static function isEntityTypePath(path:TypePath):Bool {
+        return path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "Entity"
+            || (path.pack.length == 0 && path.name == "Entity");
     }
 
     static function typeParamStorageKey(param:TypeParam, pos:Position):String {

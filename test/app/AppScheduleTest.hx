@@ -64,8 +64,10 @@ class AppScheduleTest {
         assertEq(16, app.world.getResource(ReadBack).value, "Res param should read resource");
         assertEq(3, app.world.getResource(QueryTotal).value, "Query2 param should read components");
         assertEq(1, app.world.getResource(QueryPairFilterCount).value, "Query2<DataA, DataB, Filter> param should respect filter type");
+        assertEq(1, app.world.getResource(QueryEntityPairCount).value, "Query2<Entity, Data> param should inject mixed entity/component queries");
         assertEq(3, app.world.getResource(QueryTripleTotal).value, "Query3 param should read three-component tuples");
         assertEq(1, app.world.getResource(QueryTripleFilterCount).value, "Query3<DataA, DataB, DataC, Filter> param should respect filter type");
+        assertEq(1, app.world.getResource(QueryEntityTripleCount).value, "Query3<Entity, DataA, DataB> param should inject mixed entity/component queries");
         assertEq(1, app.world.getResource(FilterCount).value, "Query<Data, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(TaggedEntityCount).value, "Query<Entity, Filter> param should inject entity-only queries");
         assertEq(2, app.world.getResource(OrFilterCount).value, "Query<Data, Or<...>> param should compose filters");
@@ -239,6 +241,13 @@ class QueryPairFilterCount implements Resource {
     }
 }
 
+class QueryEntityPairCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class QueryTripleTotal implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -247,6 +256,13 @@ class QueryTripleTotal implements Resource {
 }
 
 class QueryTripleFilterCount implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryEntityTripleCount implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -524,6 +540,17 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    public static function entityPairQuerySystem(query:Query2<bevy.ecs.Entity, AppPosition, With<AppTag>>, commands:Commands):Void {
+        var count = 0;
+        for (item in query.toArray()) {
+            if (item.entity.index == item.a.index && item.b.value > 0) {
+                count++;
+            }
+        }
+        commands.insertResource(new QueryEntityPairCount(count));
+    }
+
+    @:system("Update")
     public static function tripleQuerySystem(query:Query3<AppPosition, AppVelocity, AppTag>, commands:Commands):Void {
         commands.insertResource(new QueryTripleTotal(query.toArray().length * 3));
     }
@@ -531,6 +558,17 @@ class CounterSystems implements SystemClass implements AsyncClass {
     @:system("Update")
     public static function filteredTripleQuerySystem(query:Query3<AppPosition, AppVelocity, AppTag, With<AppTag>>, commands:Commands):Void {
         commands.insertResource(new QueryTripleFilterCount(query.toArray().length));
+    }
+
+    @:system("Update")
+    public static function entityTripleQuerySystem(query:Query3<bevy.ecs.Entity, AppPosition, AppVelocity, With<AppTag>>, commands:Commands):Void {
+        var count = 0;
+        for (item in query.toArray()) {
+            if (item.entity.index == item.a.index && item.b.value > 0 && item.c.value > 0) {
+                count++;
+            }
+        }
+        commands.insertResource(new QueryEntityTripleCount(count));
     }
 
     @:system("Update")

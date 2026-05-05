@@ -1,5 +1,9 @@
 package bevy.ecs;
 
+import bevy.ecs.EcsError.EntityDoesNotExistError;
+import bevy.ecs.EcsError.EntityNotAliveError;
+import bevy.ecs.EcsError.MissingResourceError;
+import bevy.ecs.EcsError.ResourceInitError;
 import bevy.ecs.Entity.EntityLocation;
 import bevy.ecs.Entity.EntityRef;
 import bevy.ecs.Entity.EntityWorldMut;
@@ -95,7 +99,7 @@ class World {
     public function entity(entity:Entity):EntityRef {
         var value = getEntity(entity);
         if (value == null) {
-            throw 'Entity does not exist: $entity';
+            throw new EntityDoesNotExistError(entity);
         }
         return value;
     }
@@ -107,7 +111,7 @@ class World {
     public function entityMut(entity:Entity):EntityWorldMut {
         var value = getEntityMut(entity);
         if (value == null) {
-            throw 'Entity does not exist: $entity';
+            throw new EntityDoesNotExistError(entity);
         }
         return value;
     }
@@ -174,7 +178,7 @@ class World {
     }
 
     public function queryPair<A, B>(a:Class<A>, b:Class<B>, ?aKey:String, ?bKey:String):Query2<A, B> {
-        return new Query2<A, B>(this, a, b, componentLookupKey(a, aKey), componentLookupKey(b, bKey));
+        return new Query2<A, B>(this, a, b, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey));
     }
 
     public function queryFilteredPair<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String):Query2<A, B> {
@@ -182,7 +186,7 @@ class World {
     }
 
     public function queryTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, ?aKey:String, ?bKey:String, ?cKey:String):Query3<A, B, C> {
-        return new Query3<A, B, C>(this, a, b, c, componentLookupKey(a, aKey), componentLookupKey(b, bKey), componentLookupKey(c, cKey));
+        return new Query3<A, B, C>(this, a, b, c, queryDataLookupKey(a, aKey), queryDataLookupKey(b, bKey), queryDataLookupKey(c, cKey));
     }
 
     public function queryFilteredTriple<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String):Query3<A, B, C> {
@@ -211,17 +215,22 @@ class World {
 
     public function queryTwo<A, B>(a:Class<A>, b:Class<B>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String):Array<QueryItem2<A, B>> {
         var result:Array<QueryItem2<A, B>> = [];
-        var resolvedAKey = componentLookupKey(a, aKey);
-        var resolvedBKey = componentLookupKey(b, bKey);
+        var aEntityData = isEntityClass(a);
+        var bEntityData = isEntityClass(b);
+        var resolvedAKey = aEntityData ? null : componentLookupKey(a, aKey);
+        var resolvedBKey = bEntityData ? null : componentLookupKey(b, bKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
-            if (entity == null || !storage.exists(resolvedAKey) || !storage.exists(resolvedBKey) || !matchesFilters(entity, storage, filters)) {
+            if (entity == null || !matchesFilters(entity, storage, filters)) {
+                continue;
+            }
+            if ((!aEntityData && !storage.exists(resolvedAKey)) || (!bEntityData && !storage.exists(resolvedBKey))) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: cast storage.get(resolvedAKey),
-                b: cast storage.get(resolvedBKey)
+                a: aEntityData ? cast entity : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : cast storage.get(resolvedBKey)
             });
         }
         return result;
@@ -229,23 +238,28 @@ class World {
 
     public function queryThree<A, B, C>(a:Class<A>, b:Class<B>, c:Class<C>, filters:Array<bevy.ecs.QueryFilter>, ?aKey:String, ?bKey:String, ?cKey:String):Array<QueryItem3<A, B, C>> {
         var result:Array<QueryItem3<A, B, C>> = [];
-        var resolvedAKey = componentLookupKey(a, aKey);
-        var resolvedBKey = componentLookupKey(b, bKey);
-        var resolvedCKey = componentLookupKey(c, cKey);
+        var aEntityData = isEntityClass(a);
+        var bEntityData = isEntityClass(b);
+        var cEntityData = isEntityClass(c);
+        var resolvedAKey = aEntityData ? null : componentLookupKey(a, aKey);
+        var resolvedBKey = bEntityData ? null : componentLookupKey(b, bKey);
+        var resolvedCKey = cEntityData ? null : componentLookupKey(c, cKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
             if (entity == null
-                || !storage.exists(resolvedAKey)
-                || !storage.exists(resolvedBKey)
-                || !storage.exists(resolvedCKey)
                 || !matchesFilters(entity, storage, filters)) {
+                continue;
+            }
+            if ((!aEntityData && !storage.exists(resolvedAKey))
+                || (!bEntityData && !storage.exists(resolvedBKey))
+                || (!cEntityData && !storage.exists(resolvedCKey))) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: cast storage.get(resolvedAKey),
-                b: cast storage.get(resolvedBKey),
-                c: cast storage.get(resolvedCKey)
+                a: aEntityData ? cast entity : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : cast storage.get(resolvedBKey),
+                c: cEntityData ? cast entity : cast storage.get(resolvedCKey)
             });
         }
         return result;
@@ -337,7 +351,7 @@ class World {
     public function resourceScope<R:Resource, T>(cls:Class<R>, scope:(World, R) -> T):T {
         var resource = getResource(cls);
         if (resource == null) {
-            throw 'Missing resource for resourceScope: ${Type.getClassName(cls)}';
+            throw new MissingResourceError(Type.getClassName(cls), "Missing resource for resourceScope");
         }
         return scope(this, resource);
     }
@@ -346,7 +360,7 @@ class World {
         var normalized = TypeKey.named(key);
         var resource:R = cast resources.get(normalized);
         if (resource == null) {
-            throw 'Missing resource for resourceScopeByKey: $normalized';
+            throw new MissingResourceError(normalized, "Missing resource for resourceScopeByKey");
         }
         return scope(this, resource);
     }
@@ -474,7 +488,7 @@ class World {
 
     private function assertAlive(entity:Entity):Void {
         if (!isAlive(entity)) {
-            throw 'Entity is not alive: $entity';
+            throw new EntityNotAliveError(entity);
         }
     }
 
@@ -503,7 +517,7 @@ class World {
             return cast Reflect.callMethod(cls, createDefault, []);
         }
 
-        throw 'Resource cannot be initialized automatically: ${Type.getClassName(cls)}';
+        throw new ResourceInitError(Type.getClassName(cls));
     }
 
     private function componentLookupKey<T>(cls:Class<T>, typeKey:Null<String>):String {
@@ -511,6 +525,14 @@ class World {
             return TypeKey.named(typeKey);
         }
         return TypeKey.ofClass(cls);
+    }
+
+    private function queryDataLookupKey<T>(cls:Class<T>, typeKey:Null<String>):Null<String> {
+        return isEntityClass(cls) && (typeKey == null || typeKey == "") ? null : componentLookupKey(cls, typeKey);
+    }
+
+    private function isEntityClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
 
     private function componentStorageKey(component:Dynamic):String {

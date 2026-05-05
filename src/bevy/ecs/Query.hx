@@ -1,5 +1,7 @@
 package bevy.ecs;
 
+import bevy.ecs.EcsError.QueryDoesNotMatchError;
+import bevy.ecs.EcsError.QuerySingleMissingError;
 import bevy.ecs.Added;
 import bevy.ecs.Changed;
 import bevy.ecs.With;
@@ -125,7 +127,7 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         for (entity in entities) {
             var item = get(entity);
             if (item == null) {
-                throw 'Query.getMany failed for entity $entity';
+                throw new QueryDoesNotMatchError(entity, "Query");
             }
             result.push(item);
         }
@@ -147,7 +149,7 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     public function single():QueryItem<T> {
         var item = getSingle();
         if (item == null) {
-            throw "Query did not resolve to exactly one item";
+            throw new QuerySingleMissingError("Query");
         }
         return item;
     }
@@ -157,11 +159,11 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private var world:World;
     private var aClass:Class<A>;
     private var bClass:Class<B>;
-    private var aKey:String;
-    private var bKey:String;
+    private var aKey:Null<String>;
+    private var bKey:Null<String>;
     private var filters:Array<bevy.ecs.QueryFilter>;
 
-    public function new(world:World, aClass:Class<A>, bClass:Class<B>, aKey:String, bKey:String) {
+    public function new(world:World, aClass:Class<A>, bClass:Class<B>, aKey:Null<String>, bKey:Null<String>) {
         this.world = world;
         this.aClass = aClass;
         this.bClass = bClass;
@@ -223,8 +225,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return null;
         }
 
-        var a = world.get(entity, aClass, aKey);
-        var b = world.get(entity, bClass, bKey);
+        var aEntityData = isEntityClass(aClass);
+        var bEntityData = isEntityClass(bClass);
+        var a = aEntityData ? cast entity : world.get(entity, aClass, aKey);
+        var b = bEntityData ? cast entity : world.get(entity, bClass, bKey);
         if (a == null || b == null) {
             return null;
         }
@@ -260,7 +264,7 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         for (entity in entities) {
             var item = get(entity);
             if (item == null) {
-                throw 'Query2.getMany failed for entity $entity';
+                throw new QueryDoesNotMatchError(entity, "Query2");
             }
             result.push(item);
         }
@@ -282,7 +286,7 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     public function single():QueryItem2<A, B> {
         var item = getSingle();
         if (item == null) {
-            throw "Query did not resolve to exactly one item";
+            throw new QuerySingleMissingError("Query2");
         }
         return item;
     }
@@ -293,12 +297,12 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private var aClass:Class<A>;
     private var bClass:Class<B>;
     private var cClass:Class<C>;
-    private var aKey:String;
-    private var bKey:String;
-    private var cKey:String;
+    private var aKey:Null<String>;
+    private var bKey:Null<String>;
+    private var cKey:Null<String>;
     private var filters:Array<bevy.ecs.QueryFilter>;
 
-    public function new(world:World, aClass:Class<A>, bClass:Class<B>, cClass:Class<C>, aKey:String, bKey:String, cKey:String) {
+    public function new(world:World, aClass:Class<A>, bClass:Class<B>, cClass:Class<C>, aKey:Null<String>, bKey:Null<String>, cKey:Null<String>) {
         this.world = world;
         this.aClass = aClass;
         this.bClass = bClass;
@@ -362,9 +366,12 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
             return null;
         }
 
-        var a = world.get(entity, aClass, aKey);
-        var b = world.get(entity, bClass, bKey);
-        var c = world.get(entity, cClass, cKey);
+        var aEntityData = isEntityClass(aClass);
+        var bEntityData = isEntityClass(bClass);
+        var cEntityData = isEntityClass(cClass);
+        var a = aEntityData ? cast entity : world.get(entity, aClass, aKey);
+        var b = bEntityData ? cast entity : world.get(entity, bClass, bKey);
+        var c = cEntityData ? cast entity : world.get(entity, cClass, cKey);
         if (a == null || b == null || c == null) {
             return null;
         }
@@ -400,7 +407,7 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         for (entity in entities) {
             var item = get(entity);
             if (item == null) {
-                throw 'Query3.getMany failed for entity $entity';
+                throw new QueryDoesNotMatchError(entity, "Query3");
             }
             result.push(item);
         }
@@ -422,8 +429,12 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     public function single():QueryItem3<A, B, C> {
         var item = getSingle();
         if (item == null) {
-            throw "Query did not resolve to exactly one item";
+            throw new QuerySingleMissingError("Query3");
         }
         return item;
     }
+}
+
+private function isEntityClass<T>(cls:Class<T>):Bool {
+    return Type.getClassName(cast cls) == Type.getClassName(Entity);
 }

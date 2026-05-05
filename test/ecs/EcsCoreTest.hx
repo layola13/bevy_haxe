@@ -6,9 +6,13 @@ import bevy.app.App;
 import bevy.ecs.Commands;
 import bevy.ecs.Bundle;
 import bevy.ecs.Component;
+import bevy.ecs.EcsError.EntityDoesNotExistError;
 import bevy.ecs.Entity;
 import bevy.ecs.Event;
 import bevy.ecs.Events;
+import bevy.ecs.EcsError.MissingResourceError;
+import bevy.ecs.EcsError.QueryDoesNotMatchError;
+import bevy.ecs.EcsError.QuerySingleMissingError;
 import bevy.ecs.Resource;
 import bevy.ecs.World;
 import bevy.ecs.With;
@@ -39,12 +43,14 @@ class EcsCoreTest {
         testDedicatedQueryFilters();
         testFilteredPairQueries();
         testTripleQueries();
+        testEntityMixedQueries();
         testInitResource();
         testWorldResourceScopes();
         testQueryEntityAccess();
         testEntityWorldAccess();
         testQueryCountAndStrictGetMany();
         testCommandEntityAccess();
+        testTypedEcsErrors();
         trace("EcsCoreTest ok");
     }
 
@@ -226,6 +232,23 @@ class EcsCoreTest {
         assertEq(player.index, filtered[0].entity.index, "queryFilteredTriple should keep matching entity");
     }
 
+    static function testEntityMixedQueries():Void {
+        var world = new World();
+        var player = world.spawn([new Position(2, 3), new Velocity(4, 5), new PlayerTag()]);
+        world.spawn([new Position(8, 9)]);
+
+        var pair = world.queryPair(Entity, Position).with(PlayerTag);
+        var pairItem = pair.single();
+        assertEq(player.index, cast(pairItem.a, Entity).index, "Query2<Entity, T> should expose entity as the first data slot");
+        assertEq(2, pairItem.b.x, "Query2<Entity, T> should still expose typed component data");
+
+        var triple = world.queryTriple(Entity, Position, Velocity).with(PlayerTag);
+        var tripleItem = triple.single();
+        assertEq(player.index, cast(tripleItem.a, Entity).index, "Query3<Entity, A, B> should expose entity as the first data slot");
+        assertEq(3, tripleItem.b.y, "Query3<Entity, A, B> should keep the second typed component");
+        assertEq(4, tripleItem.c.x, "Query3<Entity, A, B> should keep the third typed component");
+    }
+
     static function testInitResource():Void {
         var world = new World();
         var first = world.initResource(InitCounterResource);
@@ -326,6 +349,48 @@ class EcsCoreTest {
         assert(world.entity(entity).contains(Position), "entity commands should apply to existing entities");
         assert(world.entity(entity).contains(Velocity), "entity commands should chain inserts");
         assert(world.entity(deferred).contains(PlayerTag), "spawnEmpty entity commands should apply to new entities");
+    }
+
+    static function testTypedEcsErrors():Void {
+        var world = new World();
+        var entity = world.spawn([new Position(1, 1)]);
+        var other = world.spawn([new Velocity(2, 2)]);
+
+        var entityError:EntityDoesNotExistError = null;
+        world.despawn(entity);
+        try {
+            world.entity(entity);
+        } catch (error:EntityDoesNotExistError) {
+            entityError = error;
+        }
+        assert(entityError != null, "world.entity should throw EntityDoesNotExistError");
+        assertEq(entity.index, entityError.entity.index, "EntityDoesNotExistError should keep the failed entity");
+
+        var resourceError:MissingResourceError = null;
+        try {
+            world.resourceScope(TimeResource, function(_, _) return 0);
+        } catch (error:MissingResourceError) {
+            resourceError = error;
+        }
+        assert(resourceError != null, "resourceScope should throw MissingResourceError");
+
+        var query = world.query(Position);
+        var mismatchError:QueryDoesNotMatchError = null;
+        try {
+            query.getMany([other]);
+        } catch (error:QueryDoesNotMatchError) {
+            mismatchError = error;
+        }
+        assert(mismatchError != null, "Query.getMany should throw QueryDoesNotMatchError");
+        assertEq(other.index, mismatchError.entity.index, "QueryDoesNotMatchError should keep the failed entity");
+
+        var singleError:QuerySingleMissingError = null;
+        try {
+            query.single();
+        } catch (error:QuerySingleMissingError) {
+            singleError = error;
+        }
+        assert(singleError != null, "Query.single should throw QuerySingleMissingError when cardinality is not one");
     }
 
     static function assertEq<T>(expected:T, actual:T, label:String):Void {
