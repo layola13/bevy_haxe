@@ -4,6 +4,28 @@ package bevy.macro;
 import haxe.macro.Context;
 import haxe.macro.Expr;
 
+private typedef FilterBranch = {
+    var required:Map<String, Bool>;
+    var excluded:Map<String, Bool>;
+    var accessKeys:Map<String, Bool>;
+}
+
+private typedef FilterState = {
+    var branches:Array<FilterBranch>;
+    var required:Map<String, Bool>;
+    var excluded:Map<String, Bool>;
+    var accessKeys:Map<String, Bool>;
+}
+
+private typedef QueryAccessState = {
+    var label:String;
+    var dataKeys:Array<String>;
+    var filterBranches:Array<FilterBranch>;
+    var required:Map<String, Bool>;
+    var excluded:Map<String, Bool>;
+    var filterAccessKeys:Map<String, Bool>;
+}
+
 class SystemMacro {
     public static function build():Array<Field> {
         var fields = Context.getBuildFields();
@@ -26,17 +48,33 @@ class SystemMacro {
                     validateAsyncSystem(field, fn);
                     var schedule = parseSchedule(systemMeta);
                     var systemName = classPath + "." + field.name;
+                    var ordering = parseOrdering(field.meta, field.pos);
+                    var setConfig = parseSetConfig(field.meta, field.pos, classPath, classExpr);
+                    var conditions = parseRunConditions(field.meta, field.pos, classPath, classExpr);
                     var methodExpr:Expr = {expr: EField(classExpr, field.name), pos: field.pos};
-                    var resolved = resolveArgs(fn.args, field.pos);
+                    var lastRunTickName = "__bevyLastRunTick";
+                    var resolved = resolveArgs(fn.args, field.pos, lastRunTickName);
                     var call = {expr: ECall(methodExpr, resolved.args), pos: field.pos};
-                    var body = buildRunBody(call, fn.ret, resolved, field.pos);
-                    registrations.push(macro bevy.app.SystemRegistry.register({
-                        name: $v{systemName},
-                        schedule: $v{schedule},
-                        run: function(world:bevy.ecs.World):Dynamic {
-                            $body;
+                    var body = buildRunBody(call, fn.ret, resolved, field.pos, lastRunTickName);
+                    registrations.push(macro {
+                        var $lastRunTickName:Int = 0;
+                        var __bevyConditions = $e{conditions};
+                        var __bevySetConditions = $e{setConfig.conditions};
+                        if (($v{setConfig.before.length} > 0) || ($v{setConfig.after.length} > 0) || (__bevySetConditions.length > 0)) {
+                            bevy.app.SystemRegistry.configureSet($v{schedule}, $v{setConfig.name}, $v{setConfig.before}, $v{setConfig.after}, __bevySetConditions);
                         }
-                    }));
+                        bevy.app.SystemRegistry.register({
+                            name: $v{systemName},
+                            schedule: $v{schedule},
+                            before: $v{ordering.before},
+                            after: $v{ordering.after},
+                            conditions: __bevyConditions,
+                            sets: $v{setConfig.memberships},
+                            run: function(world:bevy.ecs.World):Dynamic {
+                                $body;
+                            }
+                        });
+                    });
                 default:
                     Context.error("@:system can only be applied to functions", field.pos);
             }
@@ -52,6 +90,9 @@ class SystemMacro {
         if (!hasMeta(field.meta, "async")) {
             return;
         }
+        validateExclusiveWorldUsage(fn.args, field.pos);
+        validateBorrowConflicts(fn.args, field.pos, false);
+        validateQueryConflicts(fn.args, field.pos);
         for (arg in fn.args) {
             if (arg.type == null) {
                 continue;
@@ -64,6 +105,8 @@ class SystemMacro {
                             Context.error("Async systems cannot take Commands yet; split command emission into a follow-up sync system", field.pos);
                         case "bevy.ecs.ResMut" | "ResMut":
                             Context.error("Async systems cannot take ResMut yet; split mutable resource access into a sync system", field.pos);
+                        case "bevy.ecs.Events.EventWriter" | "bevy.ecs.EventWriter" | "EventWriter":
+                            Context.error("Async systems cannot take EventWriter yet; split event emission into a follow-up sync system", field.pos);
                         default:
                     }
                 default:
@@ -71,22 +114,39 @@ class SystemMacro {
         }
     }
 
-    static function resolveArgs(args:Array<FunctionArg>, pos:Position):{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>} {
-        var resolved:Array<Expr> = [];
-        var prelude:Array<Expr> = [];
-        var commandsName:Null<String> = null;
-
+    static function resolveArgs(args:Array<FunctionArg>, pos:Position, lastRunTickName:String):{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>} {
+        var types:Array<ComplexType> = [];
         for (arg in args) {
             if (arg.type == null) {
                 Context.error("@:system arguments must have explicit types", pos);
             }
-            switch arg.type {
+            types.push(arg.type);
+        }
+        validateExclusiveWorldUsage(args, pos);
+        validateBorrowConflicts(args, pos, false);
+        validateQueryConflicts(args, pos);
+        return resolveParamTypes(types, pos, lastRunTickName, false);
+    }
+
+    static function resolveParamTypes(types:Array<ComplexType>, pos:Position, lastRunTickName:String, forbidMutation:Bool):{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>} {
+        var resolved:Array<Expr> = [];
+        var prelude:Array<Expr> = [];
+        var commandsName:Null<String> = null;
+
+        for (type in types) {
+            switch type {
                 case TPath(path):
                     var full = fullPath(path);
                     switch full {
                         case "bevy.ecs.World" | "World":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take World; use Res<T>, Query<...>, or EventReader<T> for read-only access", pos);
+                            }
                             resolved.push(macro world);
                         case "bevy.ecs.Commands" | "Commands":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take Commands", pos);
+                            }
                             if (commandsName != null) {
                                 Context.error("@:system supports only one Commands parameter", pos);
                             }
@@ -96,15 +156,37 @@ class SystemMacro {
                         case "bevy.ecs.Res" | "Res":
                             resolved.push(macro new bevy.ecs.Res(${buildResourceAccess(path, false, pos)}));
                         case "bevy.ecs.ResMut" | "ResMut":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take ResMut", pos);
+                            }
                             resolved.push(macro new bevy.ecs.ResMut(${buildResourceAccess(path, true, pos)}));
                         case "bevy.ecs.Query" | "Query":
-                            resolved.push(macro world.query($p{extractSingleTypePath(path, pos)}));
+                            var queryResolved = resolveQueryArg(path, pos, lastRunTickName);
+                            var queryExpr = macro world.queryFiltered($p{queryResolved.componentType}, $e{queryResolved.filters}, $e{queryResolved.componentKey});
+                            resolved.push({
+                                expr: ECheckType({expr: ECast(queryExpr, null), pos: pos}, TPath(path)),
+                                pos: pos
+                            });
                         case "bevy.ecs.Query2" | "Query2":
-                            var pair = extractTwoTypePaths(path, pos);
-                            resolved.push(macro world.queryPair($p{pair.a}, $p{pair.b}));
+                            var pair = resolveQuery2Arg(path, pos, lastRunTickName);
+                            var pairExpr = macro world.queryFilteredPair($p{pair.a}, $p{pair.b}, $e{pair.filters}, $e{pair.aKey}, $e{pair.bKey});
+                            resolved.push({
+                                expr: ECheckType({expr: ECast(pairExpr, null), pos: pos}, TPath(path)),
+                                pos: pos
+                            });
+                        case "bevy.ecs.Query3" | "Query3":
+                            var triple = resolveQuery3Arg(path, pos, lastRunTickName);
+                            var tripleExpr = macro world.queryFilteredTriple($p{triple.a}, $p{triple.b}, $p{triple.c}, $e{triple.filters}, $e{triple.aKey}, $e{triple.bKey}, $e{triple.cKey});
+                            resolved.push({
+                                expr: ECheckType({expr: ECast(tripleExpr, null), pos: pos}, TPath(path)),
+                                pos: pos
+                            });
                         case "bevy.ecs.EventReader" | "EventReader":
                             resolved.push(macro world.getEvents($p{extractSingleTypePath(path, pos)}).reader());
                         case "bevy.ecs.EventWriter" | "EventWriter":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take EventWriter", pos);
+                            }
                             resolved.push(macro new bevy.ecs.Events.EventWriter(world.getEvents($p{extractSingleTypePath(path, pos)})));
                         default:
                             Context.error('Unsupported @:system parameter type: $full', pos);
@@ -124,23 +206,23 @@ class SystemMacro {
         }, commandsName: commandsName};
     }
 
-    static function buildRunBody(call:Expr, ret:Null<ComplexType>, resolved:{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>}, pos:Position):Expr {
+    static function buildRunBody(call:Expr, ret:Null<ComplexType>, resolved:{args:Array<Expr>, prelude:Array<Expr>, applyCommands:Expr, commandsName:Null<String>}, pos:Position, lastRunTickName:String):Expr {
         var exprs = resolved.prelude.copy();
         if (isVoidReturn(ret)) {
             exprs.push(call);
             exprs.push(resolved.applyCommands);
+            exprs.push({
+                expr: EBinop(OpAssign, {expr: EConst(CIdent(lastRunTickName)), pos: pos}, macro world.tick()),
+                pos: pos
+            });
             exprs.push(macro return null);
-            return {expr: EBlock(exprs), pos: pos};
-        }
-
-        if (resolved.commandsName == null) {
-            exprs.push(macro return $call);
             return {expr: EBlock(exprs), pos: pos};
         }
 
         exprs.push(macro var __bevySystemResult = $call);
         exprs.push(macro return bevy.async.Future.fromDynamic(__bevySystemResult).map(function(__bevyIgnored) {
             ${resolved.applyCommands};
+            $i{lastRunTickName} = world.tick();
             return __bevyIgnored;
         }));
         return {expr: EBlock(exprs), pos: pos};
@@ -157,6 +239,296 @@ class SystemMacro {
         return "Update";
     }
 
+    static function parseOrdering(meta:Metadata, pos:Position):{before:Array<String>, after:Array<String>} {
+        return {
+            before: parseOrderingMeta(meta, "before", pos),
+            after: parseOrderingMeta(meta, "after", pos)
+        };
+    }
+
+    static function parseOrderingMeta(meta:Metadata, name:String, pos:Position):Array<String> {
+        var entry = findMeta(meta, name);
+        if (entry == null || entry.params == null || entry.params.length == 0) {
+            return [];
+        }
+
+        var values:Array<String> = [];
+        for (param in entry.params) {
+            switch param.expr {
+                case EConst(CString(value)):
+                    values.push(value);
+                default:
+                    Context.error('System ordering metadata @$name only supports string system names', pos);
+            }
+        }
+        return values;
+    }
+
+    static function parseRunConditions(meta:Metadata, pos:Position, classPath:String, classExpr:Expr):Expr {
+        return parseConditionEntries(meta, "runIf", pos, classPath, classExpr);
+    }
+
+    static function parseConditionEntries(meta:Metadata, metaName:String, pos:Position, classPath:String, classExpr:Expr):Expr {
+        var entries:Array<MetadataEntry> = [];
+        for (entry in meta) {
+            if (entry.name == metaName || entry.name == ":" + metaName) {
+                entries.push(entry);
+            }
+        }
+
+        if (entries.length == 0) {
+            return macro [];
+        }
+
+        var generated:Array<Expr> = [];
+        var counter = 0;
+        for (entry in entries) {
+            if (entry.params == null || entry.params.length == 0) {
+                Context.error("@:runIf requires at least one condition function", pos);
+            }
+            for (param in entry.params) {
+                generated.push(buildRunConditionExpr(param, pos, counter++, classPath, classExpr));
+            }
+        }
+        return macro $a{generated};
+    }
+
+    static function parseSetConfig(meta:Metadata, pos:Position, classPath:String, classExpr:Expr):{name:String, memberships:Array<String>, before:Array<String>, after:Array<String>, conditions:Expr} {
+        var setNames = parseSimpleStringMeta(meta, "inSet", pos);
+        if (setNames.length == 0) {
+            return {
+                name: "",
+                memberships: [],
+                before: [],
+                after: [],
+                conditions: macro []
+            };
+        }
+
+        if (setNames.length != 1) {
+            Context.error("@:inSet currently supports exactly one set per system", pos);
+        }
+
+        var setName = setNames[0];
+        return {
+            name: setName,
+            memberships: [setName],
+            before: parseSimpleStringMeta(meta, "setBefore", pos),
+            after: parseSimpleStringMeta(meta, "setAfter", pos),
+            conditions: parseConditionEntries(meta, "setRunIf", pos, classPath, classExpr)
+        };
+    }
+
+    static function parseSimpleStringMeta(meta:Metadata, name:String, pos:Position):Array<String> {
+        var entry = findMeta(meta, name);
+        if (entry == null || entry.params == null || entry.params.length == 0) {
+            return [];
+        }
+
+        var values:Array<String> = [];
+        for (param in entry.params) {
+            switch param.expr {
+                case EConst(CString(value)):
+                    values.push(value);
+                default:
+                    Context.error('Metadata @$name only supports string values', pos);
+            }
+        }
+        return values;
+    }
+
+    static function buildRunConditionExpr(param:Expr, pos:Position, index:Int, classPath:String, classExpr:Expr):Expr {
+        var targetExpr = switch param.expr {
+            case EConst(CString(value)):
+                if (StringTools.startsWith(value, classPath + ".")) {
+                    {expr: EField(classExpr, value.substr(classPath.length + 1)), pos: pos};
+                } else if (value.indexOf(".") < 0) {
+                    {expr: EField(classExpr, value), pos: pos};
+                } else {
+                    Context.parse(value, pos);
+                }
+            default:
+                param;
+        };
+        var conditionType = Context.follow(Context.typeof(targetExpr));
+        var lastRunTickName = "__bevyConditionLastRunTick" + index;
+
+        return switch conditionType {
+            case TFun(args, ret):
+                var types:Array<ComplexType> = [];
+                for (arg in args) {
+                    types.push(Context.toComplexType(arg.t));
+                }
+                validateExclusiveWorldUsageFromComplexTypes(types, pos, true);
+                validateBorrowConflictsFromComplexTypes(types, pos, true);
+                validateQueryConflictsFromComplexTypes(types, pos);
+                var resolved = resolveParamTypes(types, pos, lastRunTickName, true);
+                validateRunConditionReturn(Context.toComplexType(ret), pos);
+                var call:Expr = {expr: ECall(targetExpr, resolved.args), pos: pos};
+                var body = buildRunBody(call, Context.toComplexType(ret), resolved, pos, lastRunTickName);
+                macro {
+                    var $lastRunTickName:Int = 0;
+                    function(world:bevy.ecs.World):Dynamic {
+                        $body;
+                    };
+                };
+            default:
+                Context.error("@:runIf expects a function or static method reference", pos);
+        }
+    }
+
+    static function validateRunConditionReturn(ret:Null<ComplexType>, pos:Position):Void {
+        // Intentionally permissive here. Schedule runtime validates that each condition
+        // resolves to Bool after unwrapping synchronous values / Future values.
+    }
+
+    static function validateExclusiveWorldUsage(args:Array<FunctionArg>, pos:Position):Void {
+        var types:Array<ComplexType> = [];
+        for (arg in args) {
+            if (arg.type != null) {
+                types.push(arg.type);
+            }
+        }
+        validateExclusiveWorldUsageFromComplexTypes(types, pos, false);
+    }
+
+    static function validateExclusiveWorldUsageFromComplexTypes(types:Array<ComplexType>, pos:Position, forbidWorld:Bool):Void {
+        var worldCount = 0;
+        for (type in types) {
+            switch type {
+                case TPath(path):
+                    var full = fullPath(path);
+                    if (full == "bevy.ecs.World" || full == "World") {
+                        worldCount++;
+                    }
+                default:
+            }
+        }
+
+        if (forbidWorld && worldCount > 0) {
+            Context.error("run_if conditions cannot take World; use Res<T>, Query<...>, or EventReader<T> for read-only access", pos);
+        }
+
+        if (worldCount > 1) {
+            Context.error("@:system supports only one World parameter", pos);
+        }
+        if (worldCount == 1 && types.length > 1) {
+            Context.error("World is an exclusive system parameter and cannot be combined with other system params", pos);
+        }
+    }
+
+    static function validateBorrowConflicts(args:Array<FunctionArg>, pos:Position, forbidMutation:Bool):Void {
+        var types:Array<ComplexType> = [];
+        for (arg in args) {
+            if (arg.type != null) {
+                types.push(arg.type);
+            }
+        }
+        validateBorrowConflictsFromComplexTypes(types, pos, forbidMutation);
+    }
+
+    static function validateQueryConflicts(args:Array<FunctionArg>, pos:Position):Void {
+        var types:Array<ComplexType> = [];
+        for (arg in args) {
+            if (arg.type != null) {
+                types.push(arg.type);
+            }
+        }
+        validateQueryConflictsFromComplexTypes(types, pos);
+    }
+
+    static function validateBorrowConflictsFromComplexTypes(types:Array<ComplexType>, pos:Position, forbidMutation:Bool):Void {
+        var sharedResources:Map<String, Bool> = new Map();
+        var mutableResources:Map<String, Bool> = new Map();
+        var eventReaders:Map<String, Bool> = new Map();
+        var eventWriters:Map<String, Bool> = new Map();
+
+        for (type in types) {
+            switch type {
+                case TPath(path):
+                    var full = fullPath(path);
+                    switch full {
+                        case "bevy.ecs.Res" | "Res":
+                            var key = complexTypeStorageKey(path, pos, "resource");
+                            if (mutableResources.exists(key)) {
+                                Context.error('System parameter borrow conflict on resource $key: cannot combine Res<T> with ResMut<T>', pos);
+                            }
+                            sharedResources.set(key, true);
+                        case "bevy.ecs.ResMut" | "ResMut":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take ResMut", pos);
+                            }
+                            var key = complexTypeStorageKey(path, pos, "resource");
+                            if (sharedResources.exists(key) || mutableResources.exists(key)) {
+                                Context.error('System parameter borrow conflict on resource $key: mutable resource access must be unique', pos);
+                            }
+                            mutableResources.set(key, true);
+                        case "bevy.ecs.EventReader" | "EventReader":
+                            var key = complexTypeStorageKey(path, pos, "event");
+                            if (eventWriters.exists(key)) {
+                                Context.error('System parameter borrow conflict on event $key: cannot combine EventReader<T> with EventWriter<T>', pos);
+                            }
+                            eventReaders.set(key, true);
+                        case "bevy.ecs.EventWriter" | "EventWriter" | "bevy.ecs.Events.EventWriter":
+                            if (forbidMutation) {
+                                Context.error("run_if conditions cannot take EventWriter", pos);
+                            }
+                            var key = complexTypeStorageKey(path, pos, "event");
+                            if (eventReaders.exists(key) || eventWriters.exists(key)) {
+                                Context.error('System parameter borrow conflict on event $key: event writer access must be unique', pos);
+                            }
+                            eventWriters.set(key, true);
+                        default:
+                    }
+                default:
+            }
+        }
+    }
+
+    static function validateQueryConflictsFromComplexTypes(types:Array<ComplexType>, pos:Position):Void {
+        var queries:Array<QueryAccessState> = [];
+
+        for (type in types) {
+            switch type {
+                case TPath(path):
+                    var full = fullPath(path);
+                    switch full {
+                        case "bevy.ecs.Query" | "Query":
+                            queries.push(describeQueryAccess(path, pos));
+                        case "bevy.ecs.Query2" | "Query2":
+                            queries.push(describeQuery2Access(path, pos));
+                        case "bevy.ecs.Query3" | "Query3":
+                            queries.push(describeQuery3Access(path, pos));
+                        default:
+                    }
+                default:
+            }
+        }
+
+        for (query in queries) {
+            var seen:Map<String, Bool> = new Map();
+            for (key in query.dataKeys) {
+                if (seen.exists(key)) {
+                    Context.error('Query parameter accesses component $key more than once; duplicate query component access must be split into separate disjoint queries', pos);
+                }
+                seen.set(key, true);
+            }
+        }
+
+        for (i in 0...queries.length) {
+            for (j in i + 1...queries.length) {
+                var overlap = firstQueryConflictKey(queries[i], queries[j]);
+                if (overlap == null) {
+                    continue;
+                }
+                if (queriesAreDisjoint(queries[i], queries[j])) {
+                    continue;
+                }
+                Context.error('Query system parameter conflict on component $overlap: overlapping query accesses must be disjoint; add Without<T> filters or split conflicting queries into separate systems', pos);
+            }
+        }
+    }
+
     static function isVoidReturn(ret:Null<ComplexType>):Bool {
         if (ret == null) {
             return false;
@@ -170,7 +542,19 @@ class SystemMacro {
     }
 
     static function fullPath(path:TypePath):String {
-        return path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name;
+        return typePathSegments(path).join(".");
+    }
+
+    static function typePathSegments(path:TypePath):Array<String> {
+        var segments = path.pack.concat([path.name]);
+        if (path.sub != null && path.sub != "") {
+            segments.push(path.sub);
+        }
+        return segments;
+    }
+
+    static function typePathExpr(path:TypePath, pos:Position):Expr {
+        return Context.parse(typePathSegments(path).join("."), pos);
     }
 
     static function extractSingleTypePath(path:TypePath, pos:Position):Array<String> {
@@ -179,9 +563,501 @@ class SystemMacro {
         }
         return switch path.params[0] {
             case TPType(TPath(inner)):
-                inner.pack.concat([inner.name]);
+                typePathSegments(inner);
             default:
                 Context.error("System resource params require a class type parameter", pos);
+        }
+    }
+
+    static function resolveQueryArg(path:TypePath, pos:Position, lastRunTickName:String):{componentType:Array<String>, componentKey:Expr, filters:Expr} {
+        if (path.params == null || path.params.length < 1 || path.params.length > 2) {
+            Context.error("System Query params require one data type and an optional filter type", pos);
+        }
+
+        var componentType:Array<String>;
+        var componentKey:Expr;
+        switch path.params[0] {
+            case TPType(TPath(inner)):
+                componentType = typePathSegments(inner);
+                componentKey = inner.params != null && inner.params.length > 0 ? buildParameterizedTypeKeyExpr(inner, pos) : macro null;
+            default:
+                Context.error("System Query data parameter must be a class path", pos);
+        }
+
+        var filters = path.params.length == 2 ? buildQueryFilterArrayExpr(path.params[1], pos, lastRunTickName) : macro [];
+        return {
+            componentType: componentType,
+            componentKey: componentKey,
+            filters: filters
+        };
+    }
+
+    static function resolveQuery2Arg(path:TypePath, pos:Position, lastRunTickName:String):{a:Array<String>, b:Array<String>, aKey:Expr, bKey:Expr, filters:Expr} {
+        if (path.params == null || path.params.length < 2 || path.params.length > 3) {
+            Context.error("System Query2 params require two data types and an optional filter type", pos);
+        }
+
+        var pair = extractTwoTypePaths(path, pos);
+        var pairKeys = extractTwoTypeKeys(path, pos);
+        var filters = path.params.length == 3 ? buildQueryFilterArrayExpr(path.params[2], pos, lastRunTickName) : macro [];
+        return {
+            a: pair.a,
+            b: pair.b,
+            aKey: pairKeys.a,
+            bKey: pairKeys.b,
+            filters: filters
+        };
+    }
+
+    static function resolveQuery3Arg(path:TypePath, pos:Position, lastRunTickName:String):{a:Array<String>, b:Array<String>, c:Array<String>, aKey:Expr, bKey:Expr, cKey:Expr, filters:Expr} {
+        if (path.params == null || path.params.length < 3 || path.params.length > 4) {
+            Context.error("System Query3 params require three data types and an optional filter type", pos);
+        }
+
+        var triple = extractThreeTypePaths(path, pos);
+        var tripleKeys = extractThreeTypeKeys(path, pos);
+        var filters = path.params.length == 4 ? buildQueryFilterArrayExpr(path.params[3], pos, lastRunTickName) : macro [];
+        return {
+            a: triple.a,
+            b: triple.b,
+            c: triple.c,
+            aKey: tripleKeys.a,
+            bKey: tripleKeys.b,
+            cKey: tripleKeys.c,
+            filters: filters
+        };
+    }
+
+    static function describeQueryAccess(path:TypePath, pos:Position):QueryAccessState {
+        if (path.params == null || path.params.length < 1 || path.params.length > 2) {
+            Context.error("System Query params require one data type and an optional filter type", pos);
+        }
+
+        var dataKeys:Array<String> = [];
+        switch path.params[0] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("System Query data parameter must be a class path", pos);
+        }
+
+        var filterState = path.params.length == 2 ? describeFilterState(path.params[1], pos) : emptyFilterState();
+        return {
+            label: "Query",
+            dataKeys: dataKeys,
+            filterBranches: filterState.branches,
+            required: filterState.required,
+            excluded: filterState.excluded,
+            filterAccessKeys: filterState.accessKeys
+        };
+    }
+
+    static function describeQuery2Access(path:TypePath, pos:Position):QueryAccessState {
+        if (path.params == null || path.params.length < 2 || path.params.length > 3) {
+            Context.error("System Query2 params require two data types and an optional filter type", pos);
+        }
+
+        var dataKeys:Array<String> = [];
+        switch path.params[0] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("Query2 first parameter must be a class path", pos);
+        }
+        switch path.params[1] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("Query2 second parameter must be a class path", pos);
+        }
+
+        var filterState = path.params.length == 3 ? describeFilterState(path.params[2], pos) : emptyFilterState();
+        return {
+            label: "Query2",
+            dataKeys: dataKeys,
+            filterBranches: filterState.branches,
+            required: filterState.required,
+            excluded: filterState.excluded,
+            filterAccessKeys: filterState.accessKeys
+        };
+    }
+
+    static function describeQuery3Access(path:TypePath, pos:Position):QueryAccessState {
+        if (path.params == null || path.params.length < 3 || path.params.length > 4) {
+            Context.error("System Query3 params require three data types and an optional filter type", pos);
+        }
+
+        var dataKeys:Array<String> = [];
+        switch path.params[0] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("Query3 first parameter must be a class path", pos);
+        }
+        switch path.params[1] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("Query3 second parameter must be a class path", pos);
+        }
+        switch path.params[2] {
+            case TPType(TPath(inner)):
+                dataKeys.push(typePathStorageKey(inner, pos));
+            default:
+                Context.error("Query3 third parameter must be a class path", pos);
+        }
+
+        var filterState = path.params.length == 4 ? describeFilterState(path.params[3], pos) : emptyFilterState();
+        return {
+            label: "Query3",
+            dataKeys: dataKeys,
+            filterBranches: filterState.branches,
+            required: filterState.required,
+            excluded: filterState.excluded,
+            filterAccessKeys: filterState.accessKeys
+        };
+    }
+
+    static function emptyFilterState():FilterState {
+        return {
+            branches: [emptyFilterBranch()],
+            required: new Map(),
+            excluded: new Map(),
+            accessKeys: new Map()
+        };
+    }
+
+    static function describeFilterState(param:TypeParam, pos:Position):FilterState {
+        var branches = collectFilterBranches(param, pos);
+        if (branches.length == 0) {
+            branches = [emptyFilterBranch()];
+        }
+
+        var required = intersectBranchKeys(branches, function(branch) return branch.required);
+        var excluded = intersectBranchKeys(branches, function(branch) return branch.excluded);
+        var accessKeys:Map<String, Bool> = new Map();
+        for (branch in branches) {
+            mergeBranchKeys(accessKeys, branch.required);
+            mergeBranchKeys(accessKeys, branch.excluded);
+            mergeBranchKeys(accessKeys, branch.accessKeys);
+        }
+
+        return {
+            branches: branches,
+            required: required,
+            excluded: excluded,
+            accessKeys: accessKeys
+        };
+    }
+
+    static function firstOverlappingKey(left:Array<String>, right:Array<String>):Null<String> {
+        for (key in left) {
+            if (Lambda.has(right, key)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    static function firstQueryConflictKey(left:QueryAccessState, right:QueryAccessState):Null<String> {
+        var direct = firstOverlappingKey(left.dataKeys, right.dataKeys);
+        if (direct != null) {
+            return direct;
+        }
+
+        for (key in left.dataKeys) {
+            if (right.filterAccessKeys.exists(key)) {
+                return key;
+            }
+        }
+        for (key in right.dataKeys) {
+            if (left.filterAccessKeys.exists(key)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    static function queriesAreDisjoint(left:QueryAccessState, right:QueryAccessState):Bool {
+        for (leftBranch in left.filterBranches) {
+            for (rightBranch in right.filterBranches) {
+                if (!branchesConflict(leftBranch, rightBranch)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    static function branchesConflict(left:FilterBranch, right:FilterBranch):Bool {
+        for (key in left.required.keys()) {
+            if (right.excluded.exists(key)) {
+                return true;
+            }
+        }
+        for (key in right.required.keys()) {
+            if (left.excluded.exists(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static function collectFilterBranches(param:TypeParam, pos:Position):Array<FilterBranch> {
+        return switch param {
+            case TPType(TPath(path)):
+                var full = fullPath(path);
+                switch full {
+                    case "bevy.ecs.With" | "With":
+                        buildLeafBranches(path, pos, true, false, false, false);
+                    case "bevy.ecs.Without" | "Without":
+                        buildLeafBranches(path, pos, false, true, false, false);
+                    case "bevy.ecs.Added" | "Added":
+                        buildLeafBranches(path, pos, true, false, true, false);
+                    case "bevy.ecs.Changed" | "Changed":
+                        buildLeafBranches(path, pos, true, false, false, true);
+                    case "bevy.ecs.All" | "All":
+                        collectAllBranches(path, pos);
+                    case "bevy.ecs.Or" | "Or":
+                        collectOrBranches(path, pos);
+                    default:
+                        [emptyFilterBranch()];
+                }
+            default:
+                [emptyFilterBranch()];
+        };
+    }
+
+    static function collectAllBranches(path:TypePath, pos:Position):Array<FilterBranch> {
+        if (path.params == null || path.params.length == 0) {
+            Context.error("All<...> requires at least one child filter", pos);
+        }
+
+        var branches:Array<FilterBranch> = [emptyFilterBranch()];
+        for (child in path.params) {
+            branches = crossFilterBranches(branches, collectFilterBranches(child, pos));
+        }
+        return branches;
+    }
+
+    static function collectOrBranches(path:TypePath, pos:Position):Array<FilterBranch> {
+        if (path.params == null || path.params.length == 0) {
+            Context.error("Or<...> requires at least one child filter", pos);
+        }
+
+        var branches:Array<FilterBranch> = [];
+        for (child in path.params) {
+            var childBranches = collectFilterBranches(child, pos);
+            for (branch in childBranches) {
+                branches.push(copyFilterBranch(branch));
+            }
+        }
+        return branches;
+    }
+
+    static function buildLeafBranches(path:TypePath, pos:Position, markRequired:Bool, markExcluded:Bool, markAdded:Bool, markChanged:Bool):Array<FilterBranch> {
+        if (path.params == null || path.params.length != 1) {
+            var label = path.name;
+            Context.error('$label<T> requires exactly one type parameter', pos);
+        }
+
+        return switch path.params[0] {
+            case TPType(TPath(inner)):
+                var key = typePathStorageKey(inner, pos);
+                var branch = emptyFilterBranch();
+                if (markRequired) {
+                    branch.required.set(key, true);
+                }
+                if (markExcluded) {
+                    branch.excluded.set(key, true);
+                }
+                if (markAdded || markChanged) {
+                    branch.accessKeys.set(key, true);
+                }
+                [branch];
+            default:
+                var label = path.name;
+                Context.error('$label<T> requires a class type parameter', pos);
+        };
+    }
+
+    static function emptyFilterBranch():FilterBranch {
+        return {
+            required: new Map(),
+            excluded: new Map(),
+            accessKeys: new Map()
+        };
+    }
+
+    static function copyFilterBranch(branch:FilterBranch):FilterBranch {
+        return {
+            required: copyKeyMap(branch.required),
+            excluded: copyKeyMap(branch.excluded),
+            accessKeys: copyKeyMap(branch.accessKeys)
+        };
+    }
+
+    static function copyKeyMap(source:Map<String, Bool>):Map<String, Bool> {
+        var result:Map<String, Bool> = new Map();
+        if (source != null) {
+            for (key in source.keys()) {
+                result.set(key, true);
+            }
+        }
+        return result;
+    }
+
+    static function crossFilterBranches(left:Array<FilterBranch>, right:Array<FilterBranch>):Array<FilterBranch> {
+        var result:Array<FilterBranch> = [];
+        for (leftBranch in left) {
+            for (rightBranch in right) {
+                result.push(mergeFilterBranches(leftBranch, rightBranch));
+            }
+        }
+        return result;
+    }
+
+    static function mergeFilterBranches(left:FilterBranch, right:FilterBranch):FilterBranch {
+        var branch = copyFilterBranch(left);
+        mergeBranchKeys(branch.required, right.required);
+        mergeBranchKeys(branch.excluded, right.excluded);
+        mergeBranchKeys(branch.accessKeys, right.accessKeys);
+        return branch;
+    }
+
+    static function mergeBranchKeys(into:Map<String, Bool>, values:Map<String, Bool>):Void {
+        if (values == null) {
+            return;
+        }
+        for (key in values.keys()) {
+            into.set(key, true);
+        }
+    }
+
+    static function intersectBranchKeys(branches:Array<FilterBranch>, getter:FilterBranch->Map<String, Bool>):Map<String, Bool> {
+        var result:Map<String, Bool> = new Map();
+        if (branches == null || branches.length == 0) {
+            return result;
+        }
+
+        var first = getter(branches[0]);
+        if (first == null) {
+            return result;
+        }
+
+        for (key in first.keys()) {
+            var keep = true;
+            for (i in 1...branches.length) {
+                var branchKeys = getter(branches[i]);
+                if (branchKeys == null || !branchKeys.exists(key)) {
+                    keep = false;
+                    break;
+                }
+            }
+            if (keep) {
+                result.set(key, true);
+            }
+        }
+        return result;
+    }
+
+    static function buildQueryFilterArrayExpr(param:TypeParam, pos:Position, lastRunTickName:String):Expr {
+        var filters:Array<Expr> = [];
+        collectQueryFilterExprs(param, filters, pos, lastRunTickName);
+        return macro $a{filters};
+    }
+
+    static function collectQueryFilterExprs(param:TypeParam, into:Array<Expr>, pos:Position, lastRunTickName:String):Void {
+        switch param {
+            case TPType(TPath(path)):
+                var full = fullPath(path);
+                switch full {
+                    case "bevy.ecs.With" | "With":
+                        into.push(buildLeafFilterExpr("bevy.ecs.With", path, pos));
+                    case "bevy.ecs.Without" | "Without":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Without", path, pos));
+                    case "bevy.ecs.Added" | "Added":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Added", path, pos, lastRunTickName));
+                    case "bevy.ecs.Changed" | "Changed":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Changed", path, pos, lastRunTickName));
+                    case "bevy.ecs.All" | "All":
+                        into.push(buildCompositeFilterExpr("bevy.ecs.All", path, pos, lastRunTickName));
+                    case "bevy.ecs.Or" | "Or":
+                        into.push(buildCompositeFilterExpr("bevy.ecs.Or", path, pos, lastRunTickName));
+                    default:
+                        Context.error('Unsupported Query filter type: $full', pos);
+                }
+            default:
+                Context.error("System Query filter parameter must be a class path", pos);
+        }
+    }
+
+    static function buildLeafFilterExpr(ctorPath:String, path:TypePath, pos:Position, ?lastRunTickName:String):Expr {
+        if (path.params == null || path.params.length != 1) {
+            Context.error('Query filter $ctorPath requires exactly one type parameter', pos);
+        }
+
+        return switch path.params[0] {
+            case TPType(TPath(inner)):
+                var classExpr = typePathExpr(inner, pos);
+                var keyExpr = inner.params != null && inner.params.length > 0 ? buildParameterizedTypeKeyExpr(inner, pos) : macro null;
+                var ctor = Context.parse(ctorPath + ".of", pos);
+                var args = switch ctorPath {
+                    case "bevy.ecs.Added" | "bevy.ecs.Changed":
+                        if (lastRunTickName == null) {
+                            Context.error('Query filter $ctorPath requires a runtime last-run tick context', pos);
+                        }
+                        [classExpr, macro $i{lastRunTickName}, keyExpr];
+                    default:
+                        [classExpr, keyExpr];
+                };
+                {
+                    expr: ECall(ctor, args),
+                    pos: pos
+                };
+            default:
+                Context.error('Query filter $ctorPath requires a class type parameter', pos);
+        }
+    }
+
+    static function buildCompositeFilterExpr(ctorPath:String, path:TypePath, pos:Position, lastRunTickName:String):Expr {
+        if (path.params == null || path.params.length == 0) {
+            Context.error('Composite Query filter $ctorPath requires at least one type parameter', pos);
+        }
+
+        var children:Array<Expr> = [];
+        for (param in path.params) {
+            collectCompositeFilterChildren(param, children, pos, lastRunTickName);
+        }
+        var ctor = Context.parse(ctorPath + ".of", pos);
+        return {
+            expr: ECall(ctor, [macro $a{children}]),
+            pos: pos
+        };
+    }
+
+    static function collectCompositeFilterChildren(param:TypeParam, into:Array<Expr>, pos:Position, lastRunTickName:String):Void {
+        switch param {
+            case TPType(TPath(path)):
+                var full = fullPath(path);
+                switch full {
+                    case "bevy.ecs.With" | "With":
+                        into.push(buildLeafFilterExpr("bevy.ecs.With", path, pos));
+                    case "bevy.ecs.Without" | "Without":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Without", path, pos));
+                    case "bevy.ecs.All" | "All":
+                        into.push(buildCompositeFilterExpr("bevy.ecs.All", path, pos, lastRunTickName));
+                    case "bevy.ecs.Or" | "Or":
+                        into.push(buildCompositeFilterExpr("bevy.ecs.Or", path, pos, lastRunTickName));
+                    case "bevy.ecs.Added" | "Added":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Added", path, pos, lastRunTickName));
+                    case "bevy.ecs.Changed" | "Changed":
+                        into.push(buildLeafFilterExpr("bevy.ecs.Changed", path, pos, lastRunTickName));
+                    default:
+                        Context.error('Unsupported nested Query filter type: $full', pos);
+                }
+            default:
+                Context.error("Composite Query filters require type-path children", pos);
         }
     }
 
@@ -196,10 +1072,58 @@ class SystemMacro {
                     var key = buildParameterizedTypeKeyExpr(inner, pos);
                     macro world.getResourceByKey($key);
                 } else {
-                    macro world.getResource($p{inner.pack.concat([inner.name])});
+                    macro world.getResource($e{typePathExpr(inner, pos)});
                 }
             default:
                 Context.error("System resource params require a class type parameter", pos);
+        }
+    }
+
+    static function complexTypeStorageKey(path:TypePath, pos:Position, label:String):String {
+        if (path.params == null || path.params.length != 1) {
+            Context.error('System $label params require exactly one type parameter', pos);
+        }
+
+        return switch path.params[0] {
+            case TPType(TPath(inner)):
+                typePathStorageKey(inner, pos);
+            default:
+                Context.error('System $label params require a class type parameter', pos);
+        }
+    }
+
+    static function typePathStorageKey(path:TypePath, pos:Position):String {
+        var base = typePathSegments(path).join(".");
+        if (path.params == null || path.params.length == 0) {
+            return base;
+        }
+
+        var params:Array<String> = [];
+        for (param in path.params) {
+            params.push(typeParamStorageKey(param, pos));
+        }
+        return base + "<" + params.join(",") + ">";
+    }
+
+    static function typeParamStorageKey(param:TypeParam, pos:Position):String {
+        return switch param {
+            case TPType(TPath(inner)):
+                typePathStorageKey(inner, pos);
+            default:
+                Context.error("System params require class type parameters", pos);
+        }
+    }
+
+    static function buildOptionalTypeKeyExpr(param:TypeParam, pos:Position):Expr {
+        return switch param {
+            case TPType(TPath(inner)):
+                if (inner.params != null && inner.params.length > 0) {
+                    buildParameterizedTypeKeyExpr(inner, pos);
+                } else {
+                    macro null;
+                }
+            default:
+                Context.error("System params require class type parameters", pos);
         }
     }
 
@@ -212,7 +1136,7 @@ class SystemMacro {
         }
 
         return macro bevy.ecs.TypeKey.parameterized(
-            bevy.ecs.TypeKey.ofClass($p{path.pack.concat([path.name])}),
+            bevy.ecs.TypeKey.ofClass($e{typePathExpr(path, pos)}),
             $a{params}
         );
     }
@@ -223,7 +1147,7 @@ class SystemMacro {
                 if (inner.params != null && inner.params.length > 0) {
                     buildParameterizedTypeKeyExpr(inner, pos);
                 } else {
-                    macro bevy.ecs.TypeKey.ofClass($p{inner.pack.concat([inner.name])});
+                    macro bevy.ecs.TypeKey.ofClass($e{typePathExpr(inner, pos)});
                 }
             default:
                 Context.error("System resource params require class type parameters", pos);
@@ -231,22 +1155,69 @@ class SystemMacro {
     }
 
     static function extractTwoTypePaths(path:TypePath, pos:Position):{a:Array<String>, b:Array<String>} {
-        if (path.params == null || path.params.length != 2) {
-            Context.error("System Query2 params require exactly two type parameters", pos);
+        if (path.params == null || path.params.length < 2) {
+            Context.error("System Query2 params require at least two type parameters", pos);
         }
         return {
             a: switch path.params[0] {
                 case TPType(TPath(inner)):
-                    inner.pack.concat([inner.name]);
+                    typePathSegments(inner);
                 default:
                     Context.error("Query2 first parameter must be a class path", pos);
             },
             b: switch path.params[1] {
                 case TPType(TPath(inner)):
-                    inner.pack.concat([inner.name]);
+                    typePathSegments(inner);
                 default:
                     Context.error("Query2 second parameter must be a class path", pos);
             }
+        };
+    }
+
+    static function extractTwoTypeKeys(path:TypePath, pos:Position):{a:Expr, b:Expr} {
+        if (path.params == null || path.params.length < 2) {
+            Context.error("System Query2 params require at least two type parameters", pos);
+        }
+        return {
+            a: buildOptionalTypeKeyExpr(path.params[0], pos),
+            b: buildOptionalTypeKeyExpr(path.params[1], pos)
+        };
+    }
+
+    static function extractThreeTypePaths(path:TypePath, pos:Position):{a:Array<String>, b:Array<String>, c:Array<String>} {
+        if (path.params == null || path.params.length < 3) {
+            Context.error("System Query3 params require at least three type parameters", pos);
+        }
+        return {
+            a: switch path.params[0] {
+                case TPType(TPath(inner)):
+                    typePathSegments(inner);
+                default:
+                    Context.error("Query3 first parameter must be a class path", pos);
+            },
+            b: switch path.params[1] {
+                case TPType(TPath(inner)):
+                    typePathSegments(inner);
+                default:
+                    Context.error("Query3 second parameter must be a class path", pos);
+            },
+            c: switch path.params[2] {
+                case TPType(TPath(inner)):
+                    typePathSegments(inner);
+                default:
+                    Context.error("Query3 third parameter must be a class path", pos);
+            }
+        };
+    }
+
+    static function extractThreeTypeKeys(path:TypePath, pos:Position):{a:Expr, b:Expr, c:Expr} {
+        if (path.params == null || path.params.length < 3) {
+            Context.error("System Query3 params require at least three type parameters", pos);
+        }
+        return {
+            a: buildOptionalTypeKeyExpr(path.params[0], pos),
+            b: buildOptionalTypeKeyExpr(path.params[1], pos),
+            c: buildOptionalTypeKeyExpr(path.params[2], pos)
         };
     }
 

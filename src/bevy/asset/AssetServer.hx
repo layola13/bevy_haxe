@@ -52,7 +52,7 @@ class AssetServer implements Resource {
         var dedupKey = pathKey(assetKey, path);
 
         if (pathToHandle.exists(dedupKey)) {
-            return new Handle<T>(pathToHandle.get(dedupKey));
+            return new Handle<T>(pathToHandle.get(dedupKey), assets.handleKey());
         }
 
         var loader = loadersByType.get(assetKey);

@@ -24,6 +24,12 @@
 --next
 -cp src
 -cp test
+-main macro.MacroConstraintTest
+--interp
+
+--next
+-cp src
+-cp test
 -main app.AppScheduleTest
 --interp
 

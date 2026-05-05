@@ -15,6 +15,11 @@ class AppRunTest {
         testPluginLifecycle();
         testSetRunner();
         testScheduleRunnerPlugin();
+        testInitResource();
+        testPluginGroup();
+        testAddPluginsComposition();
+        testAddPluginsMacroVarargs();
+        testPluginAddedIntrospection();
         trace("AppRunTest ok");
     }
 
@@ -140,6 +145,104 @@ class AppRunTest {
         assertEq(1, app.world.getResource(RunnerCounter).value, "schedule runner plugin should drive one frame");
     }
 
+    static function testInitResource():Void {
+        var app = new App();
+        app.initResource(AppInitResource);
+        assertEq(1, app.world.getResource(AppInitResource).value, "app.initResource should initialize default resource");
+        app.initResource(AppInitResource);
+        assertEq(1, app.world.getResource(AppInitResource).value, "app.initResource should not overwrite existing resource");
+    }
+
+    static function testPluginGroup():Void {
+        var app = new App();
+        app.world.insertResource(new RunTrace());
+        app.addPluginGroup(new OrderedPlugins());
+
+        var trace = app.world.getResource(RunTrace);
+        assertEq("alpha,gamma", trace.join(","), "plugin group should respect ordering and disable removed plugin");
+
+        var builder = bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+            .add(new AlphaPlugin())
+            .add(new BetaPlugin());
+        assert(builder.contains(AlphaPlugin), "builder should track plugin type presence");
+        assert(builder.enabled(BetaPlugin), "plugin should start enabled");
+        builder.disable(BetaPlugin).enable(BetaPlugin);
+        assert(builder.tryAdd(new BetaPlugin()) == false, "builder should reject duplicate plugin type in tryAdd");
+
+        var replaced = builder.trySet(new BetaPlugin());
+        assert(replaced, "builder should replace an existing plugin via trySet");
+        assert(builder.tryAddBeforeOverwrite(AlphaPlugin, new GammaPlugin()), "builder should support before-overwrite insertion");
+        assert(builder.tryAddAfterOverwrite(GammaPlugin, new AlphaPlugin()), "builder should support after-overwrite insertion");
+
+        var groupedApp = new App();
+        groupedApp.world.insertResource(new RunTrace());
+        groupedApp.addPluginGroup(
+            bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                .add(new AlphaPlugin())
+                .addAfter(AlphaPlugin, new GammaPlugin())
+                .addBefore(GammaPlugin, new BetaPlugin())
+                .disable(BetaPlugin)
+        );
+        assertEq("alpha,gamma", groupedApp.world.getResource(RunTrace).join(","), "builder-backed plugin group should finish in configured order");
+    }
+
+    static function testAddPluginsComposition():Void {
+        var singleApp = new App();
+        singleApp.world.insertResource(new RunTrace());
+        singleApp.addPlugins(new AlphaPlugin());
+        assertEq("alpha", singleApp.world.getResource(RunTrace).join(","), "addPlugins should accept a single Plugin");
+
+        var builderApp = new App();
+        builderApp.world.insertResource(new RunTrace());
+        builderApp.addPlugins(
+            bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                .add(new AlphaPlugin())
+                .addAfter(AlphaPlugin, new GammaPlugin())
+                .disable(GammaPlugin)
+        );
+        assertEq("alpha", builderApp.world.getResource(RunTrace).join(","), "addPlugins should accept a PluginGroupBuilder");
+
+        var nestedApp = new App();
+        nestedApp.world.insertResource(new RunTrace());
+        var nestedItems:Array<bevy.app.Plugins> = [];
+        nestedItems.push(new AlphaPlugin());
+        nestedItems.push(
+            bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                .add(new GammaPlugin())
+        );
+        var innerItems:Array<bevy.app.Plugins> = [];
+        innerItems.push(
+            bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                .add(new DeltaPlugin())
+        );
+        nestedItems.push(innerItems);
+        var nested:bevy.app.Plugins = nestedItems;
+        nestedApp.addPlugins(nested);
+        assertEq("alpha,gamma,delta", nestedApp.world.getResource(RunTrace).join(","), "addPlugins should compose plugins, groups, builders, and nested arrays");
+    }
+
+    static function testAddPluginsMacroVarargs():Void {
+        var app = new App();
+        app.world.insertResource(new RunTrace());
+        app.addPlugins(bevy.app.PluginsDsl.of(
+            new AlphaPlugin(),
+            [
+                bevy.app.PluginGroup.PluginGroupBuilder.start(bevy.app.PluginGroup.NoopPluginGroup)
+                    .add(new GammaPlugin())
+            ],
+            new DeltaPlugin()
+        ));
+        assertEq("alpha,gamma,delta", app.world.getResource(RunTrace).join(","), "Plugins.of should accept varargs and nested arrays");
+    }
+
+    static function testPluginAddedIntrospection():Void {
+        var app = new App();
+        app.world.insertResource(new RunTrace());
+        assert(!app.isPluginAdded(AlphaPlugin), "isPluginAdded should be false before registration");
+        app.addPlugin(new AlphaPlugin());
+        assert(app.isPluginAdded(AlphaPlugin), "isPluginAdded should track registered plugin types");
+    }
+
     static function assertEq<T>(expected:T, actual:T, label:String):Void {
         if (expected != actual) {
             throw '$label expected $expected, got $actual';
@@ -207,5 +310,63 @@ class LifecyclePlugin implements bevy.app.Plugin {
 
     public function cleanup(app:App):Void {
         cleanupCalled = true;
+    }
+}
+
+class AppInitResource implements Resource {
+    public static var created:Int = 0;
+    public var value:Int;
+
+    public function new(value:Int) {
+        this.value = value;
+    }
+
+    public static function createDefault():AppInitResource {
+        created++;
+        return new AppInitResource(created);
+    }
+}
+
+class OrderedPlugins implements bevy.app.PluginGroup {
+    public function new() {}
+
+    public function build():bevy.app.PluginGroup.PluginGroupBuilder {
+        return bevy.app.PluginGroup.PluginGroupBuilder.start(OrderedPlugins)
+            .add(new AlphaPlugin())
+            .add(new BetaPlugin())
+            .addAfter(AlphaPlugin, new GammaPlugin())
+            .disable(BetaPlugin);
+    }
+}
+
+class AlphaPlugin implements bevy.app.Plugin {
+    public function new() {}
+
+    public function build(app:App):Void {
+        app.world.getResource(RunTrace).push("alpha");
+    }
+}
+
+class BetaPlugin implements bevy.app.Plugin {
+    public function new() {}
+
+    public function build(app:App):Void {
+        app.world.getResource(RunTrace).push("beta");
+    }
+}
+
+class GammaPlugin implements bevy.app.Plugin {
+    public function new() {}
+
+    public function build(app:App):Void {
+        app.world.getResource(RunTrace).push("gamma");
+    }
+}
+
+class DeltaPlugin implements bevy.app.Plugin {
+    public function new() {}
+
+    public function build(app:App):Void {
+        app.world.getResource(RunTrace).push("delta");
     }
 }

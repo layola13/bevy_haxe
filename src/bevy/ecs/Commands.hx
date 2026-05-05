@@ -25,6 +25,14 @@ class Commands {
         return spawn(bundle.toBundle());
     }
 
+    public function spawnEmpty():EntityCommands {
+        return new EntityCommands(this, world.spawn());
+    }
+
+    public function entity(entity:Entity):EntityCommands {
+        return new EntityCommands(this, entity);
+    }
+
     public function insert<T>(entity:Entity, component:T):Commands {
         queue.push(function(world) {
             world.insert(entity, component);
@@ -32,9 +40,23 @@ class Commands {
         return this;
     }
 
-    public function remove<T>(entity:Entity, cls:Class<T>):Commands {
+    public function insertByKey<T>(entity:Entity, typeKey:String, component:T):Commands {
         queue.push(function(world) {
-            world.remove(entity, cls);
+            world.insertByKey(entity, typeKey, component);
+        });
+        return this;
+    }
+
+    public function insertBundle(entity:Entity, bundle:Bundle):Commands {
+        for (component in bundle.toBundle()) {
+            insert(entity, component);
+        }
+        return this;
+    }
+
+    public function remove<T>(entity:Entity, cls:Class<T>, ?componentKey:String):Commands {
+        queue.push(function(world) {
+            world.remove(entity, cls, componentKey);
         });
         return this;
     }
@@ -49,6 +71,20 @@ class Commands {
     public function insertResource<T>(resource:T):Commands {
         queue.push(function(world) {
             world.insertResource(resource);
+        });
+        return this;
+    }
+
+    public function removeResource<T>(cls:Class<T>):Commands {
+        queue.push(function(world) {
+            world.removeResource(cls);
+        });
+        return this;
+    }
+
+    public function removeResourceByKey(key:String):Commands {
+        queue.push(function(world) {
+            world.removeResourceByKey(key);
         });
         return this;
     }
@@ -71,5 +107,43 @@ class Commands {
 
     public function len():Int {
         return queue.length;
+    }
+}
+
+class EntityCommands {
+    public var commands(default, null):Commands;
+    public var entity(default, null):Entity;
+
+    public function new(commands:Commands, entity:Entity) {
+        this.commands = commands;
+        this.entity = entity;
+    }
+
+    public inline function id():Entity {
+        return entity;
+    }
+
+    public inline function insert<T>(component:T):EntityCommands {
+        commands.insert(entity, component);
+        return this;
+    }
+
+    public inline function insertByKey<T>(typeKey:String, component:T):EntityCommands {
+        commands.insertByKey(entity, typeKey, component);
+        return this;
+    }
+
+    public inline function insertBundle(bundle:Bundle):EntityCommands {
+        commands.insertBundle(entity, bundle);
+        return this;
+    }
+
+    public inline function remove<T>(cls:Class<T>, ?componentKey:String):EntityCommands {
+        commands.remove(entity, cls, componentKey);
+        return this;
+    }
+
+    public inline function despawn():Commands {
+        return commands.despawn(entity);
     }
 }

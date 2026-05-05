@@ -6,11 +6,13 @@ class Assets<T:Asset> implements Resource {
     public var resourceKey(default, null):String;
 
     private var assetKey:String;
+    private var handleComponentKeyValue:String;
     private var nextId:Int;
     private var values:Map<Int, T>;
 
     public function new(assetClass:Class<T>) {
         assetKey = AssetType.keyOf(assetClass);
+        handleComponentKeyValue = AssetType.handleComponentKey(assetClass);
         resourceKey = AssetType.resourceKey(assetClass);
         nextId = 1;
         values = new Map();
@@ -23,7 +25,7 @@ class Assets<T:Asset> implements Resource {
     }
 
     public function reserveHandle():Handle<T> {
-        return new Handle<T>(nextId++);
+        return new Handle<T>(nextId++, handleComponentKeyValue);
     }
 
     public function set(handle:Handle<T>, value:T):Void {
@@ -50,5 +52,9 @@ class Assets<T:Asset> implements Resource {
 
     public function typeKey():String {
         return assetKey;
+    }
+
+    public function handleKey():String {
+        return handleComponentKeyValue;
     }
 }

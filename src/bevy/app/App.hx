@@ -6,7 +6,10 @@ import bevy.asset.AssetApp;
 import bevy.asset.AssetLoaderRegistration;
 import bevy.ecs.World;
 import bevy.app.Plugin.PluginTools;
+import bevy.app.Plugins;
 import bevy.app.PluginsState;
+import bevy.app.SystemConfig.SystemConfigBuilder;
+import bevy.app.SystemConfig.SystemSetConfigBuilder;
 import bevy.app.SystemRegistry.SystemRunner;
 
 typedef AppRunner = App->Future<Dynamic>;
@@ -54,11 +57,27 @@ class App {
         return this;
     }
 
-    public function addPlugins(values:Array<Plugin>):App {
-        for (plugin in values) {
-            addPlugin(plugin);
-        }
+    public function addPlugins(values:Plugins):App {
+        values.addToApp(this);
         return this;
+    }
+
+    public function addPluginGroup(group:PluginGroup):App {
+        return group.build().finish(this);
+    }
+
+    public function isPluginAdded<T:Plugin>(cls:Class<T>):Bool {
+        var expected = Type.getClassName(cls);
+        if (expected == null) {
+            return false;
+        }
+        for (plugin in plugins) {
+            var current = Type.getClass(plugin);
+            if (current != null && Type.getClassName(current) == expected) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function pluginsState():PluginsState {
@@ -114,6 +133,16 @@ class App {
         return this;
     }
 
+    public function addSystemConfig(schedule:String, config:SystemConfigBuilder):App {
+        initSchedule(schedule).addDescriptor(config.toDescriptor(schedule));
+        return this;
+    }
+
+    public function configureSet(schedule:String, config:SystemSetConfigBuilder):App {
+        config.apply(initSchedule(schedule));
+        return this;
+    }
+
     public function addRegisteredSystems(?schedule:String):App {
         if (schedule == null) {
             for (descriptor in SystemRegistry.all()) {
@@ -133,6 +162,11 @@ class App {
 
     public function registerAssetLoader(loader:AssetLoaderRegistration):App {
         return AssetApp.registerAssetLoader(this, loader);
+    }
+
+    public function initResource<T>(cls:Class<T>):App {
+        world.initResource(cls);
+        return this;
     }
 
     public function runSchedule(schedule:String):Future<Dynamic> {
