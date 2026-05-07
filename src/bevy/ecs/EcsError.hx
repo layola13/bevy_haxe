@@ -25,6 +25,7 @@ enum QueryFilterErrorKind {
     OrRequiresChildren;
 }
 
+
 class EcsError extends haxe.Exception {
     public function new(message:String, ?previous:haxe.Exception, ?native:Dynamic) {
         super(message, previous, native);

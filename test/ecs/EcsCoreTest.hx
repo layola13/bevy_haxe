@@ -38,6 +38,11 @@ import bevy.ecs.Spawned;
 import bevy.ecs.SpawnDetails;
 import bevy.ecs.Has;
 import bevy.ecs.Option;
+import bevy.ecs.Ref;
+import bevy.ecs.Mut;
+import bevy.ecs.QueryDataKey;
+import bevy.ecs.Tuple.Tuple;
+import bevy.ecs.AnyOf;
 import bevy.ecs.All;
 import bevy.ecs.Or;
 import bevy.asset.Asset;
@@ -48,6 +53,10 @@ import bevy.asset.Assets;
 import bevy.asset.Handle;
 import bevy.async.AsyncRuntime;
 import bevy.async.Future;
+
+typedef PositionVelocityAnyOf = AnyOf<Position, Velocity>;
+typedef EntityMutHealthAnyOf = AnyOf<Entity, Mut<Health>>;
+typedef HasOptionHealthAnyOf = AnyOf<Has<Health>, Option<Health>>;
 
 class EcsCoreTest {
     static function main():Void {
@@ -64,6 +73,8 @@ class EcsCoreTest {
         testSpawnDetailsQueryData();
         testHasQueryData();
         testOptionQueryData();
+        testAnyOfQueryData();
+        testRefMutQueryData();
         testFilteredPairQueries();
         testTripleQueries();
         testEntityMixedQueries();
@@ -359,6 +370,176 @@ class EcsCoreTest {
         assertEq(2, handlePresence.count(), "Query2<Handle<A>, Option<Handle<B>>> should use parameterized component keys");
         assertEq(40, handlePresence.get(bothHandles).b.value.id, "Option<Handle<B>> should return the parameterized B handle when present");
         assert(handlePresence.get(onlyHandleA).b.isNone(), "Option<Handle<B>> should return None for an entity carrying only Handle<A>");
+    }
+
+    static function testAnyOfQueryData():Void {
+        var world = new World();
+        var onlyPosition = world.spawn([new Position(5, 50)]);
+        var onlyVelocity = world.spawn([new Velocity(7, 70)]);
+        var both = world.spawn([new Position(11, 110), new Velocity(13, 130)]);
+        var neither = world.spawn([new PlayerTag()]);
+
+        var encodedAnyKey = QueryDataKey.encodeAnyOfKeys([
+            bevy.ecs.TypeKey.ofClass(Position),
+            bevy.ecs.TypeKey.ofClass(Velocity)
+        ]);
+
+        var topLevelAny = new bevy.ecs.Query.QueryAnyOf<PositionVelocityAnyOf, bevy.ecs.QueryFilter>(
+            world,
+            PositionVelocityAnyOf,
+            function(raw:Array<Any>) return new PositionVelocityAnyOf(cast raw[0], cast raw[1]),
+            [cast Position, cast Velocity],
+            [null, null],
+            [],
+            0
+        );
+        assertEq(3, topLevelAny.count(), "Query<AnyOf<...>> should match entities with at least one branch component");
+
+        var onlyPositionItem = topLevelAny.get(onlyPosition);
+        assert(onlyPositionItem != null, "AnyOf query should resolve entity with first branch only");
+        assert(onlyPositionItem.component._0.isSome(), "AnyOf first branch should be Some when Position exists");
+        assertEq(5, onlyPositionItem.component._0.value.x, "AnyOf should preserve first branch component payload");
+        assert(onlyPositionItem.component._1.isNone(), "AnyOf second branch should be None when Velocity is absent");
+
+        var onlyVelocityItem = topLevelAny.get(onlyVelocity);
+        assert(onlyVelocityItem != null, "AnyOf query should resolve entity with second branch only");
+        assert(onlyVelocityItem.component._0.isNone(), "AnyOf first branch should be None when Position is absent");
+        assert(onlyVelocityItem.component._1.isSome(), "AnyOf second branch should be Some when Velocity exists");
+        assertEq(7, onlyVelocityItem.component._1.value.x, "AnyOf should preserve second branch component payload");
+
+        var bothItem = topLevelAny.get(both);
+        assert(bothItem != null, "AnyOf query should resolve entity with both branches");
+        assert(bothItem.component._0.isSome() && bothItem.component._1.isSome(), "AnyOf should expose Some in both branches when both components exist");
+        assert(topLevelAny.get(neither) == null, "AnyOf query should reject entities with no branch components");
+
+        var keyedPair = world.queryPair(PositionVelocityAnyOf, Position, encodedAnyKey, null);
+        assertEq(2, keyedPair.count(), "Query2<AnyOf<...>, Position> should support AnyOf nested query data");
+        assert(keyedPair.get(onlyPosition) != null, "Query2 nested AnyOf should resolve entity with first branch");
+        assert(keyedPair.get(both) != null, "Query2 nested AnyOf should resolve entity with both branches");
+        assert(keyedPair.get(onlyVelocity) == null, "Query2 nested AnyOf should still require second non-synthetic query component");
+
+        var tripleAny = world.queryTriple(Entity, PositionVelocityAnyOf, Position, null, encodedAnyKey, null);
+        assertEq(2, tripleAny.count(), "Query3<..., AnyOf<...>, Position> should support AnyOf synthetic data slots");
+        var tripleBoth = tripleAny.get(both);
+        assert(tripleBoth != null, "Query3 nested AnyOf should resolve matching entity");
+        assertEq(both.index, tripleBoth.a.index, "Query3 nested AnyOf should preserve Entity query data");
+        assert(tripleBoth.b._0.isSome() && tripleBoth.b._1.isSome(), "Query3 nested AnyOf should preserve branch Option values");
+
+        var tracked = world.spawn([new Health(21), new PlayerTag("tracked")]);
+        var untracked = world.spawn([new PlayerTag("plain")]);
+        var entityMutAny = new bevy.ecs.Query.QueryAnyOf<EntityMutHealthAnyOf, bevy.ecs.QueryFilter>(
+            world,
+            EntityMutHealthAnyOf,
+            function(raw:Array<Any>) return new EntityMutHealthAnyOf(cast raw[0], cast raw[1]),
+            [cast Entity, cast Mut],
+            [
+                QueryDataKey.anyOfEntityItem(),
+                QueryDataKey.anyOfMutItem(bevy.ecs.TypeKey.ofClass(Health))
+            ],
+            [],
+            0
+        );
+        assertEq(6, entityMutAny.count(), "AnyOf<Entity, Mut<T>> should match all spawned entities");
+
+        var trackedAny = entityMutAny.get(tracked);
+        assert(trackedAny != null, "AnyOf<Entity, Mut<T>> should resolve entity carrying T");
+        assert(trackedAny.component._0.isSome(), "AnyOf<Entity, Mut<T>> should expose Entity branch as Some");
+        assertEq(tracked.index, trackedAny.component._0.value.index, "AnyOf<Entity, Mut<T>> should preserve entity id");
+        assert(trackedAny.component._1.isSome(), "AnyOf<Entity, Mut<T>> should expose Mut<T> branch as Some when T exists");
+        trackedAny.component._1.value.value.value = 34;
+        trackedAny.component._1.value.setChanged();
+        assertEq(34, world.get(tracked, Health).value, "AnyOf<Entity, Mut<T>> should persist Mut<T> world writes");
+
+        var untrackedAny = entityMutAny.get(untracked);
+        assert(untrackedAny != null, "AnyOf<Entity, Mut<T>> should resolve entity without T because Entity branch matches");
+        assert(untrackedAny.component._0.isSome(), "Entity branch should stay Some on entities without T");
+        assert(untrackedAny.component._1.isNone(), "Mut<T> branch should be None when T is absent");
+
+        var hasOptionAny = new bevy.ecs.Query.QueryAnyOf<HasOptionHealthAnyOf, bevy.ecs.QueryFilter>(
+            world,
+            HasOptionHealthAnyOf,
+            function(raw:Array<Any>) return new HasOptionHealthAnyOf(cast raw[0], cast raw[1]),
+            [cast Has, cast Option],
+            [
+                QueryDataKey.anyOfHasItem(bevy.ecs.TypeKey.ofClass(Health)),
+                QueryDataKey.anyOfOptionItem(bevy.ecs.TypeKey.ofClass(Health))
+            ],
+            [],
+            0
+        );
+        assertEq(6, hasOptionAny.count(), "AnyOf<Has<T>, Option<T>> should match all spawned entities");
+
+        var trackedHasOption = hasOptionAny.get(tracked);
+        assert(trackedHasOption != null, "AnyOf<Has<T>, Option<T>> should resolve entity carrying T");
+        assert(trackedHasOption.component._0.isSome() && trackedHasOption.component._0.value.value, "Has<T> branch should be Some(true) when T exists");
+        assert(trackedHasOption.component._1.isSome() && trackedHasOption.component._1.value.isSome(), "Option<T> branch should be Some(Some(T)) when T exists");
+
+        var untrackedHasOption = hasOptionAny.get(untracked);
+        assert(untrackedHasOption != null, "AnyOf<Has<T>, Option<T>> should resolve entity without T");
+        assert(untrackedHasOption.component._0.isSome() && !untrackedHasOption.component._0.value.value, "Has<T> branch should be Some(false) when T is absent");
+        assert(untrackedHasOption.component._1.isSome() && untrackedHasOption.component._1.value.isNone(), "Option<T> branch should be Some(None) when T is absent");
+    }
+
+    static function testRefMutQueryData():Void {
+        var world = new World();
+        var tracked = world.spawn([new Position(10, 20), new Velocity(1, 2)]);
+        var velocityOnly = world.spawn([new Velocity(3, 4)]);
+
+        var initialRef = world.query(Ref, bevy.ecs.TypeKey.ofClass(Position));
+        assertEq(1, initialRef.count(), "Query<Ref<T>> should require the queried component");
+        var trackedRef = initialRef.get(tracked);
+        assert(trackedRef != null, "Query<Ref<T>> should resolve matching entity");
+        assertEq(10, trackedRef.component.value.x, "Ref<T> should expose the typed component");
+        assert(trackedRef.component.isAdded(), "Ref<T>.isAdded should include spawn-time insertion on first observation window");
+        assert(trackedRef.component.isChanged(), "Ref<T>.isChanged should include spawn-time insertion on first observation window");
+        assertEq(world.tick(), trackedRef.component.added(), "Ref<T>.added should expose component added tick");
+        assertEq(world.tick(), trackedRef.component.lastChanged(), "Ref<T>.lastChanged should expose component changed tick");
+        assert(trackedRef.component.thisRunTick() >= trackedRef.component.lastRunTick(), "Ref<T> should expose run tick bounds");
+
+        assert(initialRef.get(velocityOnly) == null, "Query<Ref<T>> should not match entities without T");
+
+        world.advanceTick();
+        var afterInitialSince = world.tick() - 1;
+        var staleRef = world.queryFiltered(Ref, [With.of(Position)], bevy.ecs.TypeKey.ofClass(Position), afterInitialSince).get(tracked);
+        assert(staleRef != null, "Query<Ref<T>, With<T>> should still resolve matching entities");
+        assert(!staleRef.component.isAdded(), "Ref<T>.isAdded should be false once the caller advances last-run tick");
+        assert(!staleRef.component.isChanged(), "Ref<T>.isChanged should be false when there was no change after last-run");
+
+        world.insert(tracked, new Position(40, 50));
+        var changedRef = world.queryFiltered(Ref, [With.of(Position)], bevy.ecs.TypeKey.ofClass(Position), afterInitialSince).get(tracked);
+        assert(changedRef != null, "Query<Ref<T>> should keep matching after replacing T");
+        assert(!changedRef.component.isAdded(), "Replacing an existing component should not flip Ref<T>.isAdded back to true");
+        assert(changedRef.component.isChanged(), "Replacing an existing component should set Ref<T>.isChanged");
+        assertEq(40, changedRef.component.value.x, "Ref<T> should expose updated component value");
+
+        var pair = world.queryPair(Position, Ref, null, bevy.ecs.TypeKey.ofClass(Velocity));
+        assertEq(1, pair.count(), "Query2<Component, Ref<T>> should require the base component and Ref target");
+        var pairItem = pair.get(tracked);
+        assert(pairItem != null, "Query2<Component, Ref<T>> should resolve matching entity");
+        assertEq(1, pairItem.b.value.x, "Ref<T> inside Query2 should preserve queried component value");
+
+        var mutQuery = world.query(Mut, bevy.ecs.TypeKey.ofClass(Position));
+        var mutItem = mutQuery.get(tracked);
+        assert(mutItem != null, "Query<Mut<T>> should resolve matching entity");
+        assert(mutItem.component.isChangedAfter(afterInitialSince), "Mut<T> should expose changed-after metadata before explicit mark");
+
+        world.advanceTick();
+        var afterMutAdvance = world.tick() - 1;
+        var staleMut = world.queryFiltered(Mut, [With.of(Position)], bevy.ecs.TypeKey.ofClass(Position), afterMutAdvance).get(tracked);
+        assert(staleMut != null, "Query<Mut<T>> should still resolve matching entity after advancing caller tick");
+        assert(!staleMut.component.isChanged(), "Mut<T>.isChanged should be false when no change happened since last-run");
+        staleMut.component.value.x = 77;
+        staleMut.component.setChanged();
+        assert(staleMut.component.isChanged(), "Mut<T>.setChanged should flip changed state for current run");
+        assertEq(staleMut.component.thisRunTick(), staleMut.component.lastChanged(), "Mut<T>.setChanged should update lastChanged to this-run tick");
+        assertEq(77, world.get(tracked, Position).x, "Mut<T> should update the underlying world component value");
+        assert(world.isChanged(tracked, Position, afterMutAdvance), "Mut<T>.setChanged should persist change-tick update to World");
+
+        var triple = world.queryTriple(Entity, Position, Mut, null, null, bevy.ecs.TypeKey.ofClass(Velocity));
+        var tripleItem = triple.get(tracked);
+        assert(tripleItem != null, "Query3<Entity, Component, Mut<T>> should support Mut<T> synthetic data");
+        assertEq(tracked.index, tripleItem.a.index, "Query3 mixed Entity/Mut should preserve Entity data slot");
+        assertEq(1, tripleItem.c.value.x, "Mut<T> inside Query3 should preserve queried component value");
     }
 
     static function testFilteredPairQueries():Void {
@@ -820,6 +1001,7 @@ class EcsCoreTest {
         assertEq(QueryFilterErrorKind.OrRequiresChildren, orError.kind, "Or.of([]) should preserve OrRequiresChildren kind");
     }
 
+
     static function assertEq<T>(expected:T, actual:T, label:String):Void {
         if (expected != actual) {
             throw '$label expected $expected, got $actual';
@@ -888,6 +1070,14 @@ class Velocity implements Component {
     public function new(x:Int, y:Int) {
         this.x = x;
         this.y = y;
+    }
+}
+
+class Health implements Component {
+    public var value:Int;
+
+    public function new(value:Int) {
+        this.value = value;
     }
 }
 

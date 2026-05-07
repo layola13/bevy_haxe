@@ -8,6 +8,8 @@ import bevy.ecs.EcsError.MissingResourceError;
 import bevy.ecs.EcsError.ResourceInitError;
 import bevy.ecs.EcsError.SpawnError;
 import bevy.ecs.EcsError.SpawnErrorKind;
+import bevy.ecs.EcsError.TypeKeyError;
+import bevy.ecs.EcsError.TypeKeyErrorKind;
 import bevy.ecs.Entity.EntityLocation;
 import bevy.ecs.Entity.EntityRef;
 import bevy.ecs.Entity.EntityWorldMut;
@@ -226,6 +228,15 @@ class World {
         return storage != null && storage.exists(componentLookupKey(cls, typeKey));
     }
 
+    @:allow(bevy.ecs.Query)
+    private function hasByKey(entity:Entity, typeKey:Null<String>):Bool {
+        if (!isAlive(entity) || typeKey == null) {
+            return false;
+        }
+        var storage = components.get(entity.index);
+        return storage != null && storage.exists(TypeKey.named(typeKey));
+    }
+
     public function query<T>(cls:Class<T>, ?componentKey:String):Query<T> {
         return new Query<T>(this, cls, queryDataLookupKey(cls, componentKey));
     }
@@ -256,7 +267,9 @@ class World {
         var spawnDetailsData = isSpawnDetailsClass(cls);
         var hasData = isHasClass(cls);
         var optionData = isOptionClass(cls);
-        var syntheticData = entityData || spawnDetailsData || hasData || optionData;
+        var refData = isRefClass(cls);
+        var mutData = isMutClass(cls);
+        var syntheticData = entityData || spawnDetailsData || hasData || optionData || refData || mutData;
         var typeKey = syntheticData ? componentKey : componentLookupKey(cls, componentKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
@@ -266,9 +279,12 @@ class World {
             if (!syntheticData && !storage.exists(typeKey)) {
                 continue;
             }
+            if ((refData || mutData) && (typeKey == null || !storage.exists(typeKey))) {
+                continue;
+            }
             result.push({
                 entity: entity,
-                component: entityData ? cast entity : spawnDetailsData ? cast spawnDetails(entity, lastRunTick) : hasData ? cast hasQueryData(storage, typeKey) : optionData ? cast optionQueryData(storage, typeKey) : cast storage.get(typeKey)
+                component: entityData ? cast entity : spawnDetailsData ? cast spawnDetails(entity, lastRunTick) : hasData ? cast hasQueryData(storage, typeKey) : optionData ? cast optionQueryData(storage, typeKey) : refData ? cast refQueryData(entity, storage, typeKey, lastRunTick) : mutData ? cast mutQueryData(entity, storage, typeKey, lastRunTick) : cast storage.get(typeKey)
             });
         }
         return result;
@@ -284,8 +300,18 @@ class World {
         var bHasData = isHasClass(b);
         var aOptionData = isOptionClass(a);
         var bOptionData = isOptionClass(b);
-        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData;
-        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData;
+        var aRefData = isRefClass(a);
+        var bRefData = isRefClass(b);
+        var aMutData = isMutClass(a);
+        var bMutData = isMutClass(b);
+        var aAnyOfKeys = parseAnyOfQueryDataKey(aKey);
+        var bAnyOfKeys = parseAnyOfQueryDataKey(bKey);
+        var aAnyOfData = aAnyOfKeys != null;
+        var bAnyOfData = bAnyOfKeys != null;
+        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
+        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
+        var aRuntimeSyntheticData = aSyntheticData || aAnyOfData;
+        var bRuntimeSyntheticData = bSyntheticData || bAnyOfData;
         var resolvedAKey = aSyntheticData ? aKey : componentLookupKey(a, aKey);
         var resolvedBKey = bSyntheticData ? bKey : componentLookupKey(b, bKey);
         for (index => storage in components) {
@@ -293,13 +319,25 @@ class World {
             if (entity == null || !matchesFilters(entity, storage, filters)) {
                 continue;
             }
-            if ((!aSyntheticData && !storage.exists(resolvedAKey)) || (!bSyntheticData && !storage.exists(resolvedBKey))) {
+            if ((!aRuntimeSyntheticData && !storage.exists(resolvedAKey)) || (!bRuntimeSyntheticData && !storage.exists(resolvedBKey))) {
+                continue;
+            }
+            if ((aRefData || aMutData) && (resolvedAKey == null || !storage.exists(resolvedAKey))) {
+                continue;
+            }
+            if ((bRefData || bMutData) && (resolvedBKey == null || !storage.exists(resolvedBKey))) {
+                continue;
+            }
+            if (aAnyOfData && !anyOfMatches(storage, aAnyOfKeys)) {
+                continue;
+            }
+            if (bAnyOfData && !anyOfMatches(storage, bAnyOfKeys)) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : cast storage.get(resolvedBKey)
+                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick) : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick) : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick) : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick) : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick) : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick) : cast storage.get(resolvedBKey)
             });
         }
         return result;
@@ -319,9 +357,24 @@ class World {
         var aOptionData = isOptionClass(a);
         var bOptionData = isOptionClass(b);
         var cOptionData = isOptionClass(c);
-        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData;
-        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData;
-        var cSyntheticData = cEntityData || cSpawnDetailsData || cHasData || cOptionData;
+        var aRefData = isRefClass(a);
+        var bRefData = isRefClass(b);
+        var cRefData = isRefClass(c);
+        var aMutData = isMutClass(a);
+        var bMutData = isMutClass(b);
+        var cMutData = isMutClass(c);
+        var aAnyOfKeys = parseAnyOfQueryDataKey(aKey);
+        var bAnyOfKeys = parseAnyOfQueryDataKey(bKey);
+        var cAnyOfKeys = parseAnyOfQueryDataKey(cKey);
+        var aAnyOfData = aAnyOfKeys != null;
+        var bAnyOfData = bAnyOfKeys != null;
+        var cAnyOfData = cAnyOfKeys != null;
+        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
+        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
+        var cSyntheticData = cEntityData || cSpawnDetailsData || cHasData || cOptionData || cRefData || cMutData;
+        var aRuntimeSyntheticData = aSyntheticData || aAnyOfData;
+        var bRuntimeSyntheticData = bSyntheticData || bAnyOfData;
+        var cRuntimeSyntheticData = cSyntheticData || cAnyOfData;
         var resolvedAKey = aSyntheticData ? aKey : componentLookupKey(a, aKey);
         var resolvedBKey = bSyntheticData ? bKey : componentLookupKey(b, bKey);
         var resolvedCKey = cSyntheticData ? cKey : componentLookupKey(c, cKey);
@@ -331,16 +384,34 @@ class World {
                 || !matchesFilters(entity, storage, filters)) {
                 continue;
             }
-            if ((!aSyntheticData && !storage.exists(resolvedAKey))
-                || (!bSyntheticData && !storage.exists(resolvedBKey))
-                || (!cSyntheticData && !storage.exists(resolvedCKey))) {
+            if ((!aRuntimeSyntheticData && !storage.exists(resolvedAKey))
+                || (!bRuntimeSyntheticData && !storage.exists(resolvedBKey))
+                || (!cRuntimeSyntheticData && !storage.exists(resolvedCKey))) {
+                continue;
+            }
+            if ((aRefData || aMutData) && (resolvedAKey == null || !storage.exists(resolvedAKey))) {
+                continue;
+            }
+            if ((bRefData || bMutData) && (resolvedBKey == null || !storage.exists(resolvedBKey))) {
+                continue;
+            }
+            if ((cRefData || cMutData) && (resolvedCKey == null || !storage.exists(resolvedCKey))) {
+                continue;
+            }
+            if (aAnyOfData && !anyOfMatches(storage, aAnyOfKeys)) {
+                continue;
+            }
+            if (bAnyOfData && !anyOfMatches(storage, bAnyOfKeys)) {
+                continue;
+            }
+            if (cAnyOfData && !anyOfMatches(storage, cAnyOfKeys)) {
                 continue;
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : cast storage.get(resolvedBKey),
-                c: cEntityData ? cast entity : cSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : cHasData ? cast hasQueryData(storage, resolvedCKey) : cOptionData ? cast optionQueryData(storage, resolvedCKey) : cast storage.get(resolvedCKey)
+                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick) : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick) : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick) : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick) : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick) : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick) : cast storage.get(resolvedBKey),
+                c: cEntityData ? cast entity : cSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : cHasData ? cast hasQueryData(storage, resolvedCKey) : cOptionData ? cast optionQueryData(storage, resolvedCKey) : cRefData ? cast refQueryData(entity, storage, resolvedCKey, lastRunTick) : cMutData ? cast mutQueryData(entity, storage, resolvedCKey, lastRunTick) : cAnyOfData ? cast anyOfQueryData(cast c, entity, storage, cAnyOfKeys, lastRunTick) : cast storage.get(resolvedCKey)
             });
         }
         return result;
@@ -357,6 +428,10 @@ class World {
         var spawnDetailsData:Array<Bool> = [];
         var hasData:Array<Bool> = [];
         var optionData:Array<Bool> = [];
+        var refData:Array<Bool> = [];
+        var mutData:Array<Bool> = [];
+        var anyOfData:Array<Bool> = [];
+        var anyOfKeys:Array<Null<Array<String>>> = [];
         var resolvedKeys:Array<Null<String>> = [];
         for (i in 0...items.length) {
             var cls = items[i];
@@ -364,16 +439,23 @@ class World {
             var isSpawnDetailsData = isSpawnDetailsClass(cast cls);
             var isHasData = isHasClass(cast cls);
             var isOptionData = isOptionClass(cast cls);
+            var isRefData = isRefClass(cast cls);
+            var isMutData = isMutClass(cast cls);
+            var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
+            var itemAnyOfKeys = parseAnyOfQueryDataKey(explicitKey);
+            var isAnyOfData = itemAnyOfKeys != null;
             syntheticData.push(isSyntheticData);
             spawnDetailsData.push(isSpawnDetailsData);
             hasData.push(isHasData);
             optionData.push(isOptionData);
-            if (isSyntheticData) {
-                var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
-                resolvedKeys.push(isHasData || isOptionData ? explicitKey : null);
+            refData.push(isRefData);
+            mutData.push(isMutData);
+            anyOfData.push(isAnyOfData);
+            anyOfKeys.push(itemAnyOfKeys);
+            if (isSyntheticData || isAnyOfData) {
+                resolvedKeys.push(isHasData || isOptionData || isRefData || isMutData ? explicitKey : null);
                 continue;
             }
-            var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
             resolvedKeys.push(componentLookupKey(cast cls, explicitKey));
         }
 
@@ -386,8 +468,22 @@ class World {
             var values:Array<Any> = [];
             var matched = true;
             for (i in 0...items.length) {
+                if (anyOfData[i]) {
+                    var nestedAnyOfKeys = anyOfKeys[i];
+                    if (!anyOfMatches(storage, nestedAnyOfKeys)) {
+                        matched = false;
+                        break;
+                    }
+                    values.push(anyOfQueryData(cast items[i], entity, storage, nestedAnyOfKeys, lastRunTick));
+                    continue;
+                }
                 if (syntheticData[i]) {
-                    values.push(spawnDetailsData[i] ? spawnDetails(entity, lastRunTick) : hasData[i] ? hasQueryData(storage, resolvedKeys[i]) : optionData[i] ? optionQueryData(storage, resolvedKeys[i]) : entity);
+                    var key = resolvedKeys[i];
+                    if ((refData[i] || mutData[i]) && (key == null || !storage.exists(key))) {
+                        matched = false;
+                        break;
+                    }
+                    values.push(spawnDetailsData[i] ? spawnDetails(entity, lastRunTick) : hasData[i] ? hasQueryData(storage, key) : optionData[i] ? optionQueryData(storage, key) : refData[i] ? refQueryData(entity, storage, key, lastRunTick) : mutData[i] ? mutQueryData(entity, storage, key, lastRunTick) : entity);
                     continue;
                 }
 
@@ -413,16 +509,10 @@ class World {
     }
 
     @:allow(bevy.ecs.Query)
-    private function queryAnyOf(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>):Array<{entity:Entity, components:Array<Any>}> {
+    private function queryAnyOf(items:Array<Class<Any>>, filters:Array<bevy.ecs.QueryFilter>, ?itemKeys:Array<Null<String>>, lastRunTick:Int = 0):Array<{entity:Entity, components:Array<Any>}> {
         var result:Array<{entity:Entity, components:Array<Any>}> = [];
         if (items == null || items.length == 0) {
             return result;
-        }
-
-        var resolvedKeys:Array<String> = [];
-        for (i in 0...items.length) {
-            var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
-            resolvedKeys.push(componentLookupKey(cast items[i], explicitKey));
         }
 
         for (index => storage in components) {
@@ -433,12 +523,14 @@ class World {
 
             var values:Array<Any> = [];
             var matched = false;
-            for (key in resolvedKeys) {
-                var present = storage.exists(key);
+            for (i in 0...items.length) {
+                var explicitKey = itemKeys != null && i < itemKeys.length ? itemKeys[i] : null;
+                var item = anyOfBranchQueryData(cast items[i], explicitKey, entity, storage, lastRunTick);
+                var present = item.present;
                 if (present) {
                     matched = true;
                 }
-                values.push(new Option<Any>(present ? cast storage.get(key) : null));
+                values.push(new Option<Any>(present ? cast item.value : null));
             }
 
             if (!matched) {
@@ -744,6 +836,194 @@ class World {
         return new Option<Any>(typeKey != null && storage.exists(typeKey) ? cast storage.get(typeKey) : null);
     }
 
+    private function anyOfMatches(storage:Map<String, Dynamic>, keys:Null<Array<String>>):Bool {
+        if (keys == null || keys.length == 0) {
+            return false;
+        }
+        for (key in keys) {
+            var decodeKey = decodeAnyOfBranchKey(key);
+            if (anyOfBranchMatches(decodeKey, storage)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function anyOfQueryData(cls:Class<Any>, entity:Entity, storage:Map<String, Dynamic>, keys:Null<Array<String>>, lastRunTick:Int):Any {
+        var values:Array<Any> = [];
+        if (keys != null) {
+            for (key in keys) {
+                var branch = anyOfBranchQueryDataByKey(key, entity, storage, lastRunTick);
+                values.push(new Option<Any>(branch.present ? cast branch.value : null));
+            }
+        }
+        return Type.createInstance(cls, values);
+    }
+
+    private inline function decodeAnyOfBranchKey(rawKey:Null<String>):Null<String> {
+        if (rawKey == null || rawKey == "") {
+            return null;
+        }
+        var key = rawKey;
+        if (!StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX)
+            && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX)
+            && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX)
+            && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)
+            && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX)
+            && key != QueryDataKey.ANY_OF_ITEM_ENTITY
+            && key != QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
+            key = QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX + key;
+        }
+        return key;
+    }
+
+    private inline function anyOfInnerKey(rawKey:String, prefix:String):String {
+        return rawKey.substr(prefix.length);
+    }
+
+    private function anyOfBranchMatches(rawKey:Null<String>, storage:Map<String, Dynamic>):Bool {
+        if (rawKey == null || rawKey == "") {
+            return false;
+        }
+        var key = rawKey;
+        if (StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX)) {
+            var componentKey = anyOfInnerKey(key, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX);
+            return componentKey != "" && storage.exists(componentKey);
+        }
+        if (StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX)) {
+            return true;
+        }
+        if (StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX)) {
+            return true;
+        }
+        if (StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_REF_PREFIX) || StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX)) {
+            var refMutKey = StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)
+                ? anyOfInnerKey(key, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)
+                : anyOfInnerKey(key, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX);
+            return refMutKey != "" && storage.exists(refMutKey);
+        }
+        if (key == QueryDataKey.ANY_OF_ITEM_ENTITY || key == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
+            return true;
+        }
+        return false;
+    }
+
+    private function anyOfBranchQueryDataByKey(rawKey:Null<String>, entity:Entity, storage:Map<String, Dynamic>, lastRunTick:Int):{present:Bool, value:Any} {
+        var keyForDecode = decodeAnyOfBranchKey(rawKey);
+        if (keyForDecode == null || keyForDecode == "") {
+            return {present: false, value: null};
+        }
+
+        if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX)) {
+            var componentKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX);
+            var present = componentKey != "" && storage.exists(componentKey);
+            return {present: present, value: present ? cast storage.get(componentKey) : null};
+        }
+
+        if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX)) {
+            var hasKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX);
+            return {present: true, value: hasQueryData(storage, hasKey)};
+        }
+
+        if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX)) {
+            var optionKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX);
+            return {present: true, value: optionQueryData(storage, optionKey)};
+        }
+
+        if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)) {
+            var refKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_REF_PREFIX);
+            if (refKey == "" || !storage.exists(refKey)) {
+                return {present: false, value: null};
+            }
+            return {present: true, value: refQueryData(entity, storage, refKey, lastRunTick)};
+        }
+
+        if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX)) {
+            var mutKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX);
+            if (mutKey == "" || !storage.exists(mutKey)) {
+                return {present: false, value: null};
+            }
+            return {present: true, value: mutQueryData(entity, storage, mutKey, lastRunTick)};
+        }
+
+        if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY) {
+            return {present: true, value: entity};
+        }
+
+        if (keyForDecode == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
+            var details = spawnDetails(entity, lastRunTick);
+            return {present: details != null, value: details};
+        }
+
+        return {present: false, value: null};
+    }
+
+    private function anyOfBranchQueryData(
+        cls:Class<Any>,
+        rawKey:Null<String>,
+        entity:Entity,
+        storage:Map<String, Dynamic>,
+        lastRunTick:Int
+    ):{present:Bool, value:Any} {
+        var keyForDecode = rawKey;
+        if (keyForDecode == null || keyForDecode == "") {
+            keyForDecode = anyOfDefaultBranchKey(cls);
+            if (keyForDecode == null || keyForDecode == "") {
+                return {present: false, value: null};
+            }
+        }
+        return anyOfBranchQueryDataByKey(keyForDecode, entity, storage, lastRunTick);
+    }
+
+    private function anyOfDefaultBranchKey(cls:Class<Any>):Null<String> {
+        var clsName = Type.getClassName(cast cls);
+        if (clsName == null || clsName == "") {
+            return null;
+        }
+        if (clsName == "bevy.ecs.Entity") {
+            return QueryDataKey.ANY_OF_ITEM_ENTITY;
+        }
+        if (clsName == "bevy.ecs.SpawnDetails") {
+            return QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS;
+        }
+        if (clsName == "bevy.ecs.Has" || clsName == "bevy.ecs.Option" || clsName == "bevy.ecs.Ref" || clsName == "bevy.ecs.Mut") {
+            return null;
+        }
+        return QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX + componentLookupKey(cast cls, null);
+    }
+
+    private function parseAnyOfQueryDataKey(typeKey:Null<String>):Null<Array<String>> {
+        return QueryDataKey.parseAnyOfKeys(typeKey);
+    }
+
+    private function refQueryData(entity:Entity, storage:Map<String, Dynamic>, typeKey:Null<String>, lastRunTick:Int):Ref<Any> {
+        var key = typeKey;
+        if (key == null || key == "") {
+            throw new TypeKeyError(TypeKeyErrorKind.EmptyName);
+        }
+        key = TypeKey.named(key);
+        var value:Any = cast storage.get(key);
+        var changeKey = componentChangeKey(entity, key);
+        var addedTick = addedComponents.get(changeKey);
+        var changedTick = changedComponents.get(changeKey);
+        return new Ref<Any>(value, addedTick != null ? addedTick : 0, changedTick != null ? changedTick : 0, lastRunTick, changeTick);
+    }
+
+    private function mutQueryData(entity:Entity, storage:Map<String, Dynamic>, typeKey:Null<String>, lastRunTick:Int):Mut<Any> {
+        var key = typeKey;
+        if (key == null || key == "") {
+            throw new TypeKeyError(TypeKeyErrorKind.EmptyName);
+        }
+        key = TypeKey.named(key);
+        var value:Any = cast storage.get(key);
+        var changeKey = componentChangeKey(entity, key);
+        var addedTick = addedComponents.get(changeKey);
+        var changedTick = changedComponents.get(changeKey);
+        return new Mut<Any>(value, addedTick != null ? addedTick : 0, changedTick != null ? changedTick : 0, lastRunTick, changeTick, function() {
+            changedComponents.set(changeKey, changeTick);
+        });
+    }
+
     @:allow(bevy.ecs.Commands)
     private static function captureSpawnedBy():String {
         var stack = haxe.CallStack.callStack();
@@ -810,8 +1090,16 @@ class World {
         return Type.getClassName(cast cls) == Type.getClassName(Option);
     }
 
+    private function isRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Ref);
+    }
+
+    private function isMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Mut);
+    }
+
     private function isSyntheticQueryDataClass<T>(cls:Class<T>):Bool {
-        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls);
+        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
     }
 
     private function componentStorageKey(component:Dynamic):String {

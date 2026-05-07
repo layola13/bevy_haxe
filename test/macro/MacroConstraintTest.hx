@@ -12,6 +12,9 @@ class MacroConstraintTest {
         testWorldMixedParamRejected();
         testQueryConflictRejected();
         testQueryPairConflictRejected();
+        testQueryPairRefDuplicateRejected();
+        testQueryPairMutDuplicateRejected();
+        testQueryPairRefMutDuplicateRejected();
         testQueryPairAddedConflictRejected();
         testQueryPairAddedDisjointAllowed();
         testQueryPairChangedConflictRejected();
@@ -19,7 +22,14 @@ class MacroConstraintTest {
         testQueryPairCompositeConflictRejected();
         testQueryPairCompositeDisjointAllowed();
         testQueryPairOrBranchConflictRejected();
+        testQueryPairFilterTupleConflictRejected();
+        testQueryPairFilterTupleDisjointAllowed();
+        testQueryPairNestedTupleOrConflictRejected();
+        testQueryPairNestedTupleOrDisjointAllowed();
         testQueryTripleAddedConflictRejected();
+        testQueryTripleRefDuplicateRejected();
+        testQueryTripleMutDuplicateRejected();
+        testQueryTripleRefMutDuplicateRejected();
         testQueryTripleAddedDisjointAllowed();
         testQueryTripleEntityAddedConflictRejected();
         testQueryTripleEntityAddedDisjointAllowed();
@@ -30,6 +40,10 @@ class MacroConstraintTest {
         testQueryTripleCompositeConflictRejected();
         testQueryTripleCompositeDisjointAllowed();
         testQueryTripleOrBranchConflictRejected();
+        testQueryTripleFilterTupleConflictRejected();
+        testQueryTripleFilterTupleDisjointAllowed();
+        testQueryTripleNestedTupleOrConflictRejected();
+        testQueryTripleNestedTupleOrDisjointAllowed();
         testQueryTuple1ConflictRejected();
         testQueryTuple1DisjointAllowed();
         testQueryTupleGenericConflictRejected();
@@ -56,6 +70,9 @@ class MacroConstraintTest {
         testQueryTupleCompositeConflictRejected();
         testQueryTupleOrBranchConflictRejected();
         testQueryTupleDuplicateRejected();
+        testQueryTupleRefDuplicateRejected();
+        testQueryTupleMutDuplicateRejected();
+        testQueryTupleRefMutDuplicateRejected();
         testQueryTupleChangedConflictRejected();
         testQueryTupleAddedConflictRejected();
         testQueryTupleAddedDisjointAllowed();
@@ -70,8 +87,12 @@ class MacroConstraintTest {
         testQueryTupleCompositeDisjointAllowed();
         testQueryTuple4ConflictRejected();
         testQueryTuple5ConflictRejected();
+        testQueryTuple6ConflictRejected();
         testQueryTuple10ConflictRejected();
+        testQueryTuple12ConflictRejected();
         testQueryTuple15ConflictRejected();
+        testQueryTuple6DisjointAllowed();
+        testQueryTuple12DisjointAllowed();
         testQueryTuple15DisjointAllowed();
         testQueryDisjointAllowed();
         testQueryCompositeConflictRejected();
@@ -85,8 +106,38 @@ class MacroConstraintTest {
         testQueryTupleHasNoConflictAllowed();
         testQueryOptionConflictRejected();
         testQueryOptionDisjointAllowed();
+        testQueryRefConflictRejected();
+        testQueryRefDisjointAllowed();
+        testQueryMutConflictRejected();
+        testQueryMutDisjointAllowed();
+        testQueryRefMutConflictRejected();
+        testQueryTupleRefConflictRejected();
+        testQueryTupleRefDisjointAllowed();
+        testQueryTupleMutConflictRejected();
+        testQueryTupleMutDisjointAllowed();
+        testQueryTupleRefMutConflictRejected();
         testQueryAnyOfConflictRejected();
         testQueryAnyOfDisjointAllowed();
+        testQueryAnyOfEntityMutDisjointAllowed();
+        testQueryAnyOfWithRefRefNoConflictAllowed();
+        testQueryAnyOfWithMutAndRefConflictRejected();
+        testQueryAnyOfWithRefAndMutConflictRejected();
+        testQueryAnyOfMutOptionConflictRejected();
+        testQueryAnyOfNoRequiredBranchConflictRejected();
+        testQueryAnyOfNoRequiredBranchDisjointAllowed();
+        testQueryAnyOfAndWithoutDisjointAllowed();
+        testQueryPairAnyOfConflictRejected();
+        testQueryPairAnyOfDisjointAllowed();
+        testQueryPairAnyOfWithoutBranchConflictRejected();
+        testQueryPairAnyOfWithoutBranchesDisjointAllowed();
+        testQueryTripleAnyOfConflictRejected();
+        testQueryTripleAnyOfDisjointAllowed();
+        testQueryTripleAnyOfWithoutBranchConflictRejected();
+        testQueryTripleAnyOfWithoutBranchesDisjointAllowed();
+        testQueryTupleAnyOfConflictRejected();
+        testQueryTupleAnyOfDisjointAllowed();
+        testQueryTupleAnyOfWithoutBranchConflictRejected();
+        testQueryTupleAnyOfWithoutBranchesDisjointAllowed();
         testQueryChangedConflictRejected();
         trace("MacroConstraintTest ok");
     }
@@ -139,6 +190,24 @@ class MacroConstraintTest {
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query pair conflict diagnostic");
     }
 
+    static function testQueryPairRefDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryPairRefDuplicateConstraint.hx", "constraint.QueryPairRefDuplicateConstraint");
+        assert(result.code != 0, "Query2<Ref<T>, T> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query pair Ref<T> duplicate diagnostic");
+    }
+
+    static function testQueryPairMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryPairMutDuplicateConstraint.hx", "constraint.QueryPairMutDuplicateConstraint");
+        assert(result.code != 0, "Query2<Mut<T>, T> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query pair Mut<T> duplicate diagnostic");
+    }
+
+    static function testQueryPairRefMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryPairRefMutDuplicateConstraint.hx", "constraint.QueryPairRefMutDuplicateConstraint");
+        assert(result.code != 0, "Query2<Ref<T>, Mut<T>> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query pair Ref<T>/Mut<T> duplicate diagnostic");
+    }
+
     static function testQueryPairAddedConflictRejected():Void {
         var result = runCompile("constraint/QueryPairAddedConflictConstraint.hx", "constraint.QueryPairAddedConflictConstraint");
         assert(result.code != 0, "Query2 and Added<T> overlap should fail compilation");
@@ -178,10 +247,50 @@ class MacroConstraintTest {
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query pair Or-branch conflict diagnostic");
     }
 
+    static function testQueryPairFilterTupleConflictRejected():Void {
+        var result = runCompile("constraint/QueryPairFilterTupleConflictConstraint.hx", "constraint.QueryPairFilterTupleConflictConstraint");
+        assert(result.code != 0, "Query2 should reject satisfiable overlapping tuple-filter branches");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query pair tuple-filter conflict diagnostic");
+    }
+
+    static function testQueryPairFilterTupleDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryPairFilterTupleDisjointConstraint.hx", "constraint.QueryPairFilterTupleDisjointConstraint");
+        assert(result.code == 0, "Query2 should compile when tuple filters prove disjointness");
+    }
+
+    static function testQueryPairNestedTupleOrConflictRejected():Void {
+        var result = runCompile("constraint/QueryPairNestedTupleOrConflictConstraint.hx", "constraint.QueryPairNestedTupleOrConflictConstraint");
+        assert(result.code != 0, "Query2 should reject nested Or<Tuple...> when one branch overlaps");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query pair nested tuple-or conflict diagnostic");
+    }
+
+    static function testQueryPairNestedTupleOrDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryPairNestedTupleOrDisjointConstraint.hx", "constraint.QueryPairNestedTupleOrDisjointConstraint");
+        assert(result.code == 0, "Query2 should compile nested Or<Tuple...> when all branches are disjoint");
+    }
+
     static function testQueryTripleAddedConflictRejected():Void {
         var result = runCompile("constraint/QueryTripleAddedConflictConstraint.hx", "constraint.QueryTripleAddedConflictConstraint");
         assert(result.code != 0, "Query3 and Added<T> overlap should fail compilation");
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query triple added conflict diagnostic");
+    }
+
+    static function testQueryTripleRefDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTripleRefDuplicateConstraint.hx", "constraint.QueryTripleRefDuplicateConstraint");
+        assert(result.code != 0, "Query3<Ref<T>, T, ...> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query triple Ref<T> duplicate diagnostic");
+    }
+
+    static function testQueryTripleMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTripleMutDuplicateConstraint.hx", "constraint.QueryTripleMutDuplicateConstraint");
+        assert(result.code != 0, "Query3<Mut<T>, T, ...> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query triple Mut<T> duplicate diagnostic");
+    }
+
+    static function testQueryTripleRefMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTripleRefMutDuplicateConstraint.hx", "constraint.QueryTripleRefMutDuplicateConstraint");
+        assert(result.code != 0, "Query3<Ref<T>, Mut<T>, ...> duplicate data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query triple Ref<T>/Mut<T> duplicate diagnostic");
     }
 
     static function testQueryTripleAddedDisjointAllowed():Void {
@@ -237,6 +346,28 @@ class MacroConstraintTest {
         var result = runCompile("constraint/QueryTripleOrBranchConflictConstraint.hx", "constraint.QueryTripleOrBranchConflictConstraint");
         assert(result.code != 0, "Query3 should conflict when an Or branch allows overlap");
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query triple Or-branch conflict diagnostic");
+    }
+
+    static function testQueryTripleFilterTupleConflictRejected():Void {
+        var result = runCompile("constraint/QueryTripleFilterTupleConflictConstraint.hx", "constraint.QueryTripleFilterTupleConflictConstraint");
+        assert(result.code != 0, "Query3 should reject satisfiable overlapping tuple-filter branches");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query triple tuple-filter conflict diagnostic");
+    }
+
+    static function testQueryTripleFilterTupleDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTripleFilterTupleDisjointConstraint.hx", "constraint.QueryTripleFilterTupleDisjointConstraint");
+        assert(result.code == 0, "Query3 should compile when tuple filters prove disjointness");
+    }
+
+    static function testQueryTripleNestedTupleOrConflictRejected():Void {
+        var result = runCompile("constraint/QueryTripleNestedTupleOrConflictConstraint.hx", "constraint.QueryTripleNestedTupleOrConflictConstraint");
+        assert(result.code != 0, "Query3 should reject nested Or<Tuple...> when one branch overlaps");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query triple nested tuple-or conflict diagnostic");
+    }
+
+    static function testQueryTripleNestedTupleOrDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTripleNestedTupleOrDisjointConstraint.hx", "constraint.QueryTripleNestedTupleOrDisjointConstraint");
+        assert(result.code == 0, "Query3 should compile nested Or<Tuple...> when all branches are disjoint");
     }
 
     static function testQueryTuple1ConflictRejected():Void {
@@ -384,6 +515,24 @@ class MacroConstraintTest {
         assert(contains(result.stderr, "duplicate query component access"), "query tuple duplicate diagnostic");
     }
 
+    static function testQueryTupleRefDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTupleRefDuplicateConstraint.hx", "constraint.QueryTupleRefDuplicateConstraint");
+        assert(result.code != 0, "Query<Tuple<Ref<T>, T>> duplicate tuple data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query tuple Ref<T> duplicate diagnostic");
+    }
+
+    static function testQueryTupleMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTupleMutDuplicateConstraint.hx", "constraint.QueryTupleMutDuplicateConstraint");
+        assert(result.code != 0, "Query<Tuple<Mut<T>, T>> duplicate tuple data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query tuple Mut<T> duplicate diagnostic");
+    }
+
+    static function testQueryTupleRefMutDuplicateRejected():Void {
+        var result = runCompile("constraint/QueryTupleRefMutDuplicateConstraint.hx", "constraint.QueryTupleRefMutDuplicateConstraint");
+        assert(result.code != 0, "Query<Tuple<Ref<T>, Mut<T>>> duplicate tuple data access should fail compilation");
+        assert(contains(result.stderr, "duplicate query component access"), "query tuple Ref<T>/Mut<T> duplicate diagnostic");
+    }
+
     static function testQueryTupleChangedConflictRejected():Void {
         var result = runCompile("constraint/QueryTupleChangedConflictConstraint.hx", "constraint.QueryTupleChangedConflictConstraint");
         assert(result.code != 0, "tuple Query and Changed<T> overlap should fail compilation");
@@ -460,16 +609,38 @@ class MacroConstraintTest {
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query tuple5 conflict diagnostic");
     }
 
+    static function testQueryTuple6ConflictRejected():Void {
+        var result = runCompile("constraint/QueryTuple6ConflictConstraint.hx", "constraint.QueryTuple6ConflictConstraint");
+        assert(result.code != 0, "Query<Tuple6<...>> and Query overlap should fail compilation");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query tuple6 conflict diagnostic");
+    }
+
     static function testQueryTuple10ConflictRejected():Void {
         var result = runCompile("constraint/QueryTuple10ConflictConstraint.hx", "constraint.QueryTuple10ConflictConstraint");
         assert(result.code != 0, "Query<Tuple10<...>> and Query overlap should fail compilation");
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query tuple10 conflict diagnostic");
     }
 
+    static function testQueryTuple12ConflictRejected():Void {
+        var result = runCompile("constraint/QueryTuple12ConflictConstraint.hx", "constraint.QueryTuple12ConflictConstraint");
+        assert(result.code != 0, "Query<Tuple12<...>> and Query overlap should fail compilation");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query tuple12 conflict diagnostic");
+    }
+
     static function testQueryTuple15ConflictRejected():Void {
         var result = runCompile("constraint/QueryTuple15ConflictConstraint.hx", "constraint.QueryTuple15ConflictConstraint");
         assert(result.code != 0, "Query<Tuple15<...>> and Query overlap should fail compilation");
         assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "query tuple15 conflict diagnostic");
+    }
+
+    static function testQueryTuple6DisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTuple6DisjointConstraint.hx", "constraint.QueryTuple6DisjointConstraint");
+        assert(result.code == 0, "disjoint tuple6 Query filters should compile");
+    }
+
+    static function testQueryTuple12DisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTuple12DisjointConstraint.hx", "constraint.QueryTuple12DisjointConstraint");
+        assert(result.code == 0, "disjoint tuple12 Query filters should compile");
     }
 
     static function testQueryTuple15DisjointAllowed():Void {
@@ -541,6 +712,62 @@ class MacroConstraintTest {
         assert(result.code == 0, "Option<T> query data should compile when explicit filters prove disjointness");
     }
 
+    static function testQueryRefConflictRejected():Void {
+        var result = runCompile("constraint/QueryRefConflictConstraint.hx", "constraint.QueryRefConflictConstraint");
+        assert(result.code != 0, "Ref<T> query data should conflict with overlapping Query<T> access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Ref<T> query conflict diagnostic");
+    }
+
+    static function testQueryRefDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryRefDisjointConstraint.hx", "constraint.QueryRefDisjointConstraint");
+        assert(result.code == 0, "Ref<T> query data should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryMutConflictRejected():Void {
+        var result = runCompile("constraint/QueryMutConflictConstraint.hx", "constraint.QueryMutConflictConstraint");
+        assert(result.code != 0, "Mut<T> query data should conflict with overlapping Query<T> access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Mut<T> query conflict diagnostic");
+    }
+
+    static function testQueryMutDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryMutDisjointConstraint.hx", "constraint.QueryMutDisjointConstraint");
+        assert(result.code == 0, "Mut<T> query data should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryRefMutConflictRejected():Void {
+        var result = runCompile("constraint/QueryRefMutConflictConstraint.hx", "constraint.QueryRefMutConflictConstraint");
+        assert(result.code != 0, "Ref<T> and Mut<T> query data should conflict on overlapping access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Ref<T>/Mut<T> query conflict diagnostic");
+    }
+
+    static function testQueryTupleRefConflictRejected():Void {
+        var result = runCompile("constraint/QueryTupleRefConflictConstraint.hx", "constraint.QueryTupleRefConflictConstraint");
+        assert(result.code != 0, "Tuple<Ref<T>, ...> query data should conflict with overlapping Query<T> access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Tuple<Ref<T>> query conflict diagnostic");
+    }
+
+    static function testQueryTupleRefDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTupleRefDisjointConstraint.hx", "constraint.QueryTupleRefDisjointConstraint");
+        assert(result.code == 0, "Tuple<Ref<T>, ...> query data should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryTupleMutConflictRejected():Void {
+        var result = runCompile("constraint/QueryTupleMutConflictConstraint.hx", "constraint.QueryTupleMutConflictConstraint");
+        assert(result.code != 0, "Tuple<Mut<T>, ...> query data should conflict with overlapping Query<T> access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Tuple<Mut<T>> query conflict diagnostic");
+    }
+
+    static function testQueryTupleMutDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTupleMutDisjointConstraint.hx", "constraint.QueryTupleMutDisjointConstraint");
+        assert(result.code == 0, "Tuple<Mut<T>, ...> query data should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryTupleRefMutConflictRejected():Void {
+        var result = runCompile("constraint/QueryTupleRefMutConflictConstraint.hx", "constraint.QueryTupleRefMutConflictConstraint");
+        assert(result.code != 0, "Tuple<Ref<T>, ...> and Tuple<Mut<T>, ...> should conflict on overlapping access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Tuple<Ref<T>>/Tuple<Mut<T>> query conflict diagnostic");
+    }
+
     static function testQueryAnyOfConflictRejected():Void {
         var result = runCompile("constraint/QueryAnyOfConflictConstraint.hx", "constraint.QueryAnyOfConflictConstraint");
         assert(result.code != 0, "AnyOf query data should conflict with overlapping component access");
@@ -550,6 +777,116 @@ class MacroConstraintTest {
     static function testQueryAnyOfDisjointAllowed():Void {
         var result = runCompile("constraint/QueryAnyOfDisjointConstraint.hx", "constraint.QueryAnyOfDisjointConstraint");
         assert(result.code == 0, "AnyOf query data should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryAnyOfEntityMutDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryAnyOfEntityMutDisjointConstraint.hx", "constraint.QueryAnyOfEntityMutDisjointConstraint");
+        assert(result.code == 0, "AnyOf<Entity, Mut<T>> should compile when overlapping mutable access is explicitly disjoint");
+    }
+
+    static function testQueryAnyOfWithRefRefNoConflictAllowed():Void {
+        var result = runCompile("constraint/QueryAnyOfWithRefRefNoConflictConstraint.hx", "constraint.QueryAnyOfWithRefRefNoConflictConstraint");
+        assert(result.code == 0, "AnyOf<T, T> should compile when both branches are read-only access");
+    }
+
+    static function testQueryAnyOfWithMutAndRefConflictRejected():Void {
+        var result = runCompile("constraint/QueryAnyOfWithMutAndRefConflictConstraint.hx", "constraint.QueryAnyOfWithMutAndRefConflictConstraint");
+        assert(result.code != 0, "AnyOf<Mut<T>, T> should reject duplicate mutable/read overlap on T");
+        assert(contains(result.stderr, "duplicate query component access"), "AnyOf<Mut<T>, T> duplicate-data diagnostic");
+    }
+
+    static function testQueryAnyOfWithRefAndMutConflictRejected():Void {
+        var result = runCompile("constraint/QueryAnyOfWithRefAndMutConflictConstraint.hx", "constraint.QueryAnyOfWithRefAndMutConflictConstraint");
+        assert(result.code != 0, "AnyOf<T, Mut<T>> should reject duplicate mutable/read overlap on T");
+        assert(contains(result.stderr, "duplicate query component access"), "AnyOf<T, Mut<T>> duplicate-data diagnostic");
+    }
+
+    static function testQueryAnyOfMutOptionConflictRejected():Void {
+        var result = runCompile("constraint/QueryAnyOfMutOptionConflictConstraint.hx", "constraint.QueryAnyOfMutOptionConflictConstraint");
+        assert(result.code != 0, "AnyOf<Mut<T>, Option<T>> should reject duplicate mutable/read overlap on T");
+        assert(contains(result.stderr, "duplicate query component access"), "AnyOf<Mut<T>, Option<T>> duplicate-data diagnostic");
+    }
+
+    static function testQueryAnyOfNoRequiredBranchConflictRejected():Void {
+        var result = runCompile("constraint/QueryAnyOfNoRequiredBranchConflictConstraint.hx", "constraint.QueryAnyOfNoRequiredBranchConflictConstraint");
+        assert(result.code != 0, "AnyOf<Has<T>, Option<T>> should still conflict with Query<T> access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "AnyOf no-required-branch conflict diagnostic");
+    }
+
+    static function testQueryAnyOfNoRequiredBranchDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryAnyOfNoRequiredBranchDisjointConstraint.hx", "constraint.QueryAnyOfNoRequiredBranchDisjointConstraint");
+        assert(result.code == 0, "AnyOf<Has<T>, Option<T>> should compile when explicit filters make T disjoint");
+    }
+
+    static function testQueryAnyOfAndWithoutDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryAnyOfAndWithoutDisjointConstraint.hx", "constraint.QueryAnyOfAndWithoutDisjointConstraint");
+        assert(result.code == 0, "AnyOf<A, B> should compile with Query<C, Without<A>, Without<B>> when overlap is fully excluded");
+    }
+
+    static function testQueryPairAnyOfConflictRejected():Void {
+        var result = runCompile("constraint/QueryPairAnyOfConflictConstraint.hx", "constraint.QueryPairAnyOfConflictConstraint");
+        assert(result.code != 0, "Query2<AnyOf<...>, ...> should conflict with overlapping access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Query2 AnyOf conflict diagnostic");
+    }
+
+    static function testQueryPairAnyOfDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryPairAnyOfDisjointConstraint.hx", "constraint.QueryPairAnyOfDisjointConstraint");
+        assert(result.code == 0, "Query2<AnyOf<...>, ...> should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryPairAnyOfWithoutBranchConflictRejected():Void {
+        var result = runCompile("constraint/QueryPairAnyOfWithoutBranchConflictConstraint.hx", "constraint.QueryPairAnyOfWithoutBranchConflictConstraint");
+        assert(result.code != 0, "Query2<AnyOf<...>, ...> should still conflict when only one AnyOf branch is excluded");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Query2 AnyOf Without-single-branch conflict diagnostic");
+    }
+
+    static function testQueryPairAnyOfWithoutBranchesDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryPairAnyOfWithoutBranchesDisjointConstraint.hx", "constraint.QueryPairAnyOfWithoutBranchesDisjointConstraint");
+        assert(result.code == 0, "Query2<AnyOf<...>, ...> should compile when all AnyOf branches are excluded by filters");
+    }
+
+    static function testQueryTripleAnyOfConflictRejected():Void {
+        var result = runCompile("constraint/QueryTripleAnyOfConflictConstraint.hx", "constraint.QueryTripleAnyOfConflictConstraint");
+        assert(result.code != 0, "Query3<AnyOf<...>, ...> should conflict with overlapping access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Query3 AnyOf conflict diagnostic");
+    }
+
+    static function testQueryTripleAnyOfDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTripleAnyOfDisjointConstraint.hx", "constraint.QueryTripleAnyOfDisjointConstraint");
+        assert(result.code == 0, "Query3<AnyOf<...>, ...> should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryTripleAnyOfWithoutBranchConflictRejected():Void {
+        var result = runCompile("constraint/QueryTripleAnyOfWithoutBranchConflictConstraint.hx", "constraint.QueryTripleAnyOfWithoutBranchConflictConstraint");
+        assert(result.code != 0, "Query3<AnyOf<...>, ...> should still conflict when only one AnyOf branch is excluded");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Query3 AnyOf Without-single-branch conflict diagnostic");
+    }
+
+    static function testQueryTripleAnyOfWithoutBranchesDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTripleAnyOfWithoutBranchesDisjointConstraint.hx", "constraint.QueryTripleAnyOfWithoutBranchesDisjointConstraint");
+        assert(result.code == 0, "Query3<AnyOf<...>, ...> should compile when all AnyOf branches are excluded by filters");
+    }
+
+    static function testQueryTupleAnyOfConflictRejected():Void {
+        var result = runCompile("constraint/QueryTupleAnyOfConflictConstraint.hx", "constraint.QueryTupleAnyOfConflictConstraint");
+        assert(result.code != 0, "Query<Tuple<AnyOf<...>, ...>> should conflict with overlapping access");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Tuple AnyOf conflict diagnostic");
+    }
+
+    static function testQueryTupleAnyOfDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTupleAnyOfDisjointConstraint.hx", "constraint.QueryTupleAnyOfDisjointConstraint");
+        assert(result.code == 0, "Query<Tuple<AnyOf<...>, ...>> should compile when explicit filters prove disjointness");
+    }
+
+    static function testQueryTupleAnyOfWithoutBranchConflictRejected():Void {
+        var result = runCompile("constraint/QueryTupleAnyOfWithoutBranchConflictConstraint.hx", "constraint.QueryTupleAnyOfWithoutBranchConflictConstraint");
+        assert(result.code != 0, "Query<Tuple<AnyOf<...>, ...>> should still conflict when only one AnyOf branch is excluded");
+        assert(contains(result.stderr, "overlapping query accesses must be disjoint"), "Tuple AnyOf Without-single-branch conflict diagnostic");
+    }
+
+    static function testQueryTupleAnyOfWithoutBranchesDisjointAllowed():Void {
+        var result = runCompile("constraint/QueryTupleAnyOfWithoutBranchesDisjointConstraint.hx", "constraint.QueryTupleAnyOfWithoutBranchesDisjointConstraint");
+        assert(result.code == 0, "Query<Tuple<AnyOf<...>, ...>> should compile when all AnyOf branches are excluded by filters");
     }
 
     static function testQueryChangedConflictRejected():Void {

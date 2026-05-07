@@ -195,8 +195,16 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return Type.getClassName(cast cls) == Type.getClassName(Option);
     }
 
+    private inline function isRefClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Ref);
+    }
+
+    private inline function isMutClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Mut);
+    }
+
     private inline function isSyntheticQueryDataClass<C>(cls:Class<C>):Bool {
-        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls);
+        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
     }
 }
 
@@ -284,10 +292,22 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var bHasData = isHasClass(bClass);
         var aOptionData = isOptionClass(aClass);
         var bOptionData = isOptionClass(bClass);
-        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && world.get(entity, aClass, aKey) == null) {
+        var aRefData = isRefClass(aClass);
+        var bRefData = isRefClass(bClass);
+        var aMutData = isMutClass(aClass);
+        var bMutData = isMutClass(bClass);
+        var aAnyOfData = isAnyOfKey(aKey);
+        var bAnyOfData = isAnyOfKey(bKey);
+        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
             return null;
         }
-        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && world.get(entity, bClass, bKey) == null) {
+        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
+            return null;
+        }
+        if ((aRefData || aMutData) && !world.hasByKey(entity, aKey)) {
+            return null;
+        }
+        if ((bRefData || bMutData) && !world.hasByKey(entity, bKey)) {
             return null;
         }
         if (aSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
@@ -386,6 +406,18 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     private inline function isOptionClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Option);
     }
+
+    private inline function isRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Ref);
+    }
+
+    private inline function isMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Mut);
+    }
+
+    private inline function isAnyOfKey(typeKey:Null<String>):Bool {
+        return QueryDataKey.isAnyOfKey(typeKey);
+    }
 }
 
 class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
@@ -480,13 +512,31 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var aOptionData = isOptionClass(aClass);
         var bOptionData = isOptionClass(bClass);
         var cOptionData = isOptionClass(cClass);
-        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && world.get(entity, aClass, aKey) == null) {
+        var aRefData = isRefClass(aClass);
+        var bRefData = isRefClass(bClass);
+        var cRefData = isRefClass(cClass);
+        var aMutData = isMutClass(aClass);
+        var bMutData = isMutClass(bClass);
+        var cMutData = isMutClass(cClass);
+        var aAnyOfData = isAnyOfKey(aKey);
+        var bAnyOfData = isAnyOfKey(bKey);
+        var cAnyOfData = isAnyOfKey(cKey);
+        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
             return null;
         }
-        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && world.get(entity, bClass, bKey) == null) {
+        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
             return null;
         }
-        if (!cEntityData && !cSpawnDetailsData && !cHasData && !cOptionData && world.get(entity, cClass, cKey) == null) {
+        if (!cEntityData && !cSpawnDetailsData && !cHasData && !cOptionData && !cRefData && !cMutData && !cAnyOfData && world.get(entity, cClass, cKey) == null) {
+            return null;
+        }
+        if ((aRefData || aMutData) && !world.hasByKey(entity, aKey)) {
+            return null;
+        }
+        if ((bRefData || bMutData) && !world.hasByKey(entity, bKey)) {
+            return null;
+        }
+        if ((cRefData || cMutData) && !world.hasByKey(entity, cKey)) {
             return null;
         }
         if (aSpawnDetailsData && world.spawnDetails(entity, lastRunTick) == null) {
@@ -587,6 +637,18 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
 
     private inline function isOptionClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Option);
+    }
+
+    private inline function isRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Ref);
+    }
+
+    private inline function isMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(Mut);
+    }
+
+    private inline function isAnyOfKey(typeKey:Null<String>):Bool {
+        return QueryDataKey.isAnyOfKey(typeKey);
     }
 }
 
@@ -748,14 +810,16 @@ class QueryAnyOf<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
     private var itemKeys:Array<Null<String>>;
     private var anyOfFilters:Array<bevy.ecs.QueryFilter>;
     private var anyOfFactory:Array<Any>->T;
+    private var anyOfLastRunTick:Int;
 
-    public function new(world:World, anyOfClass:Class<T>, anyOfFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>) {
-        super(world, anyOfClass, null);
+    public function new(world:World, anyOfClass:Class<T>, anyOfFactory:Array<Any>->T, itemClasses:Array<Class<Any>>, itemKeys:Array<Null<String>>, filters:Array<bevy.ecs.QueryFilter>, lastRunTick:Int = 0) {
+        super(world, anyOfClass, null, lastRunTick);
         this.worldRef = world;
         this.anyOfFactory = anyOfFactory;
         this.itemClasses = itemClasses;
         this.itemKeys = itemKeys;
         this.anyOfFilters = filters != null ? filters.copy() : [];
+        this.anyOfLastRunTick = lastRunTick;
     }
 
     override public function filter(value:bevy.ecs.QueryFilter):Query<T, F> {
@@ -791,7 +855,7 @@ class QueryAnyOf<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> extends Query
     }
 
     override public function toArray():Array<QueryItem<T>> {
-        var raw = worldRef.queryAnyOf(itemClasses, anyOfFilters, itemKeys);
+        var raw = worldRef.queryAnyOf(itemClasses, anyOfFilters, itemKeys, anyOfLastRunTick);
         var result:Array<QueryItem<T>> = [];
         for (item in raw) {
             result.push({
