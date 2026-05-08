@@ -4,6 +4,8 @@ class QueryDataKey {
     public static inline var ANY_OF_PREFIX:String = "__bevy_anyof__:";
     public static inline var ANY_OF_ITEM_COMPONENT_PREFIX:String = "component:";
     public static inline var ANY_OF_ITEM_ENTITY:String = "entity";
+    public static inline var ANY_OF_ITEM_ENTITY_REF:String = "entity_ref";
+    public static inline var ANY_OF_ITEM_ENTITY_WORLD_MUT:String = "entity_world_mut";
     public static inline var ANY_OF_ITEM_SPAWN_DETAILS:String = "spawn_details";
     public static inline var ANY_OF_ITEM_HAS_PREFIX:String = "has:";
     public static inline var ANY_OF_ITEM_OPTION_PREFIX:String = "option:";
@@ -45,6 +47,14 @@ class QueryDataKey {
 
     public static inline function anyOfEntityItem():String {
         return ANY_OF_ITEM_ENTITY;
+    }
+
+    public static inline function anyOfEntityRefItem():String {
+        return ANY_OF_ITEM_ENTITY_REF;
+    }
+
+    public static inline function anyOfEntityWorldMutItem():String {
+        return ANY_OF_ITEM_ENTITY_WORLD_MUT;
     }
 
     public static inline function anyOfSpawnDetailsItem():String {

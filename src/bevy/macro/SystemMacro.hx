@@ -32,6 +32,11 @@ private typedef QueryDataState = {
 }
 
 class SystemMacro {
+    static inline var ENTITY_REF_RESOURCE_KEY:String = "__bevy_resource__:*";
+    static inline var ENTITY_REF_MUT_KEY:String = "__bevy_entity_ref__";
+    static inline var ENTITY_WORLD_MUT_KEY:String = "__bevy_entity_world_mut__";
+    static inline var IS_RESOURCE_TYPE_KEY:String = "bevy.ecs.IsResource";
+
     public static function build():Array<Field> {
         var fields = Context.getBuildFields();
         var cls = Context.getLocalClass().get();
@@ -483,12 +488,29 @@ class SystemMacro {
         var mutableResources:Map<String, Bool> = new Map();
         var eventReaders:Map<String, Bool> = new Map();
         var eventWriters:Map<String, Bool> = new Map();
+        var queries:Array<QueryAccessState> = [];
 
         for (type in types) {
             switch type {
                 case TPath(path):
                     var full = fullPath(path);
                     switch full {
+                        case "bevy.ecs.Query" | "Query":
+                            var anyOfPath = extractAnyOfDataPath(path, pos);
+                            if (anyOfPath != null && anyOfPath.params != null && anyOfPath.params.length > 0) {
+                                queries.push(describeAnyOfQueryAccess(path, pos, anyOfPath.params.length));
+                            } else {
+                                var tuplePath = extractTupleDataPath(path, pos);
+                                if (tuplePath != null && tuplePath.params != null && tuplePath.params.length > 0) {
+                                    queries.push(describeTupleQueryAccess(path, pos, tuplePath.params.length));
+                                } else {
+                                    queries.push(describeQueryAccess(path, pos));
+                                }
+                            }
+                        case "bevy.ecs.Query2" | "Query2":
+                            queries.push(describeQuery2Access(path, pos));
+                        case "bevy.ecs.Query3" | "Query3":
+                            queries.push(describeQuery3Access(path, pos));
                         case "bevy.ecs.Res" | "Res":
                             var key = complexTypeStorageKey(path, pos, "resource");
                             if (mutableResources.exists(key)) {
@@ -522,6 +544,35 @@ class SystemMacro {
                         default:
                     }
                 default:
+            }
+        }
+
+        for (query in queries) {
+            var hasEntityRef = Lambda.has(query.dataKeys, ENTITY_REF_MUT_KEY);
+            var hasEntityWorldMut = Lambda.has(query.dataKeys, ENTITY_WORLD_MUT_KEY);
+            if (!hasEntityRef && !hasEntityWorldMut) {
+                continue;
+            }
+
+            for (key in mutableResources.keys()) {
+                if (queryDisjointFromResource(query, key)) {
+                    continue;
+                }
+                if (hasEntityWorldMut) {
+                    Context.error('System parameter borrow conflict on resource $key: query access overlaps with EntityWorldMut access', pos);
+                }
+                if (hasEntityRef) {
+                    Context.error('System parameter borrow conflict on resource $key: query access overlaps with EntityRef access', pos);
+                }
+            }
+
+            if (hasEntityWorldMut) {
+                for (key in sharedResources.keys()) {
+                    if (queryDisjointFromResource(query, key)) {
+                        continue;
+                    }
+                    Context.error('System parameter borrow conflict on resource $key: query access overlaps with EntityWorldMut access', pos);
+                }
             }
         }
     }
@@ -568,6 +619,28 @@ class SystemMacro {
 
         for (i in 0...queries.length) {
             for (j in i + 1...queries.length) {
+                var left = queries[i];
+                var right = queries[j];
+                var leftEntityRef = Lambda.has(left.dataKeys, ENTITY_REF_MUT_KEY);
+                var rightEntityRef = Lambda.has(right.dataKeys, ENTITY_REF_MUT_KEY);
+                var leftEntityWorldMut = Lambda.has(left.dataKeys, ENTITY_WORLD_MUT_KEY);
+                var rightEntityWorldMut = Lambda.has(right.dataKeys, ENTITY_WORLD_MUT_KEY);
+
+                if (leftEntityWorldMut || rightEntityWorldMut) {
+                    if (queriesAreDisjoint(left, right)) {
+                        continue;
+                    }
+                    Context.error('System parameter borrow conflict on resource $ENTITY_REF_RESOURCE_KEY: query access overlaps with EntityWorldMut access', pos);
+                }
+
+                if (leftEntityRef || rightEntityRef) {
+                    if (queriesAreDisjoint(left, right)) {
+                        continue;
+                    }
+                    var overlap = firstMeaningfulQueryAccessKey(leftEntityRef ? right : left);
+                    Context.error('Query system parameter conflict on component $overlap: overlapping query accesses must be disjoint; add Without<T> filters or split conflicting queries into separate systems', pos);
+                }
+
                 var overlap = firstQueryConflictKey(queries[i], queries[j]);
                 if (overlap == null) {
                     continue;
@@ -956,6 +1029,20 @@ class SystemMacro {
         return null;
     }
 
+    static function firstMeaningfulQueryAccessKey(query:QueryAccessState):String {
+        for (key in query.dataKeys) {
+            if (key != ENTITY_REF_MUT_KEY && key != ENTITY_WORLD_MUT_KEY) {
+                return key;
+            }
+        }
+        for (key in query.filterAccessKeys.keys()) {
+            if (key != ENTITY_REF_MUT_KEY && key != ENTITY_WORLD_MUT_KEY) {
+                return key;
+            }
+        }
+        return ENTITY_REF_RESOURCE_KEY;
+    }
+
     static function firstQueryConflictKey(left:QueryAccessState, right:QueryAccessState):Null<String> {
         var direct = firstOverlappingKey(left.dataKeys, right.dataKeys);
         if (direct != null) {
@@ -998,6 +1085,33 @@ class SystemMacro {
             }
         }
         return false;
+    }
+
+    static function queryDisjointFromResource(query:QueryAccessState, resourceKey:String):Bool {
+        for (branch in query.filterBranches) {
+            var excludesSpecific = branch.excluded.exists(resourceKey);
+            var excludesAnyResource = branchExcludesAnyResource(branch);
+            if (!excludesSpecific && !excludesAnyResource) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static function branchExcludesAnyResource(branch:FilterBranch):Bool {
+        for (key in branch.excluded.keys()) {
+            if (isResourceMarkerKey(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static function isResourceMarkerKey(key:String):Bool {
+        if (key == IS_RESOURCE_TYPE_KEY || key == "IsResource") {
+            return true;
+        }
+        return StringTools.endsWith(key, ".IsResource");
     }
 
     static function collectFilterBranches(param:TypeParam, pos:Position):Array<FilterBranch> {
@@ -1542,6 +1656,12 @@ class SystemMacro {
         if (isEntityTypePath(path)) {
             return macro bevy.ecs.QueryDataKey.anyOfEntityItem();
         }
+        if (isEntityRefTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfEntityRefItem();
+        }
+        if (isEntityWorldMutTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfEntityWorldMutItem();
+        }
         if (isSpawnDetailsTypePath(path)) {
             return macro bevy.ecs.QueryDataKey.anyOfSpawnDetailsItem();
         }
@@ -1550,8 +1670,8 @@ class SystemMacro {
         }
         if (isOptionTypePath(path)) {
             var target = extractOptionTargetTypePath(path, pos);
-            rejectSyntheticOptionTarget(target, pos);
-            return macro bevy.ecs.QueryDataKey.anyOfOptionItem(${buildConcreteTypeKeyExpr(target, pos)});
+            rejectUnsupportedOptionSyntheticTarget(target, pos);
+            return macro bevy.ecs.QueryDataKey.anyOfOptionItem(${buildOptionTargetTypeKeyExpr(target, pos)});
         }
         if (isRefTypePath(path) || isMutTypePath(path)) {
             var target = extractRefMutTargetTypePath(path, pos);
@@ -1561,7 +1681,7 @@ class SystemMacro {
                 : macro bevy.ecs.QueryDataKey.anyOfMutItem($e{targetKey});
         }
         if (isAnyOfTypePath(path)) {
-            Context.error("Query data AnyOf<...> does not support nested AnyOf child branches yet", pos);
+            return buildAnyOfQueryDataTypeKeyExpr(path, pos);
         }
         var componentKeyExpr = buildConcreteTypeKeyExpr(path, pos);
         return encodeDataClass
@@ -1657,6 +1777,18 @@ class SystemMacro {
                 requiredBranches: [new Map()]
             };
         }
+        if (isEntityRefTypePath(path)) {
+            return {
+                accessKeys: [ENTITY_REF_MUT_KEY],
+                requiredBranches: [new Map()]
+            };
+        }
+        if (isEntityWorldMutTypePath(path)) {
+            return {
+                accessKeys: [ENTITY_WORLD_MUT_KEY],
+                requiredBranches: [new Map()]
+            };
+        }
         if (isRefTypePath(path) || isMutTypePath(path)) {
             var target = extractRefMutTargetTypePath(path, pos);
             var key = typePathStorageKey(target, pos);
@@ -1674,9 +1806,10 @@ class SystemMacro {
         }
         if (isOptionTypePath(path)) {
             var target = extractOptionTargetTypePath(path, pos);
-            rejectSyntheticOptionTarget(target, pos);
+            rejectUnsupportedOptionSyntheticTarget(target, pos);
+            var targetState = collectQueryDataState(target, pos);
             return {
-                accessKeys: [typePathStorageKey(target, pos)],
+                accessKeys: targetState.accessKeys.copy(),
                 requiredBranches: [new Map()]
             };
         }
@@ -1757,6 +1890,18 @@ class SystemMacro {
             || (path.pack.length == 0 && path.name == "Entity");
     }
 
+    static function isEntityRefTypePath(path:TypePath):Bool {
+        return path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "Entity" && path.sub == "EntityRef"
+            || path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "EntityRef"
+            || (path.pack.length == 0 && path.name == "EntityRef");
+    }
+
+    static function isEntityWorldMutTypePath(path:TypePath):Bool {
+        return path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "Entity" && path.sub == "EntityWorldMut"
+            || path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "EntityWorldMut"
+            || (path.pack.length == 0 && path.name == "EntityWorldMut");
+    }
+
     static function isSpawnDetailsTypePath(path:TypePath):Bool {
         return path.pack.length == 2 && path.pack[0] == "bevy" && path.pack[1] == "ecs" && path.name == "SpawnDetails"
             || (path.pack.length == 0 && path.name == "SpawnDetails");
@@ -1822,13 +1967,47 @@ class SystemMacro {
         }
         if (isOptionTypePath(path)) {
             var target = extractOptionTargetTypePath(path, pos);
-            rejectSyntheticOptionTarget(target, pos);
-            return buildConcreteTypeKeyExpr(target, pos);
+            rejectUnsupportedOptionSyntheticTarget(target, pos);
+            return buildOptionTargetTypeKeyExpr(target, pos);
         }
         if (isAnyOfTypePath(path)) {
             return buildAnyOfQueryDataTypeKeyExpr(path, pos);
         }
         return path.params != null && path.params.length > 0 ? buildParameterizedTypeKeyExpr(path, pos) : macro null;
+    }
+
+    static function buildOptionTargetTypeKeyExpr(path:TypePath, pos:Position):Expr {
+        if (isEntityTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfEntityItem();
+        }
+        if (isEntityRefTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfEntityRefItem();
+        }
+        if (isEntityWorldMutTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfEntityWorldMutItem();
+        }
+        if (isSpawnDetailsTypePath(path)) {
+            return macro bevy.ecs.QueryDataKey.anyOfSpawnDetailsItem();
+        }
+        if (isHasTypePath(path)) {
+            var target = extractHasTargetTypePath(path, pos);
+            return macro bevy.ecs.QueryDataKey.anyOfHasItem(${buildConcreteTypeKeyExpr(target, pos)});
+        }
+        if (isOptionTypePath(path)) {
+            var target = extractOptionTargetTypePath(path, pos);
+            return macro bevy.ecs.QueryDataKey.anyOfOptionItem(${buildOptionTargetTypeKeyExpr(target, pos)});
+        }
+        if (isAnyOfTypePath(path)) {
+            return buildAnyOfQueryDataTypeKeyExpr(path, pos);
+        }
+        if (isRefTypePath(path) || isMutTypePath(path)) {
+            var target = extractRefMutTargetTypePath(path, pos);
+            var targetKey = buildConcreteTypeKeyExpr(target, pos);
+            return isRefTypePath(path)
+                ? macro bevy.ecs.QueryDataKey.anyOfRefItem($e{targetKey})
+                : macro bevy.ecs.QueryDataKey.anyOfMutItem($e{targetKey});
+        }
+        return buildConcreteTypeKeyExpr(path, pos);
     }
 
     static function extractHasTargetTypePath(path:TypePath, pos:Position):TypePath {
@@ -1867,10 +2046,8 @@ class SystemMacro {
         }
     }
 
-    static function rejectSyntheticOptionTarget(path:TypePath, pos:Position):Void {
-        if (isEntityTypePath(path) || isSpawnDetailsTypePath(path) || isHasTypePath(path) || isOptionTypePath(path)) {
-            Context.error("Query data Option<T> currently supports component query data T; nested synthetic query data is not implemented yet", pos);
-        }
+    static function rejectUnsupportedOptionSyntheticTarget(path:TypePath, pos:Position):Void {
+        // Option<T> supports every query-data target T this macro can encode.
     }
 
     static function buildConcreteTypeKeyExpr(path:TypePath, pos:Position):Expr {

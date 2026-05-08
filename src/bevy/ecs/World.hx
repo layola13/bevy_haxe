@@ -264,12 +264,14 @@ class World {
     public function queryOne<T>(cls:Class<T>, filters:Array<bevy.ecs.QueryFilter>, ?componentKey:String, lastRunTick:Int = 0):Array<QueryItem<T>> {
         var result:Array<QueryItem<T>> = [];
         var entityData = isEntityClass(cls);
+        var entityRefData = isEntityRefClass(cls);
+        var entityWorldMutData = isEntityWorldMutClass(cls);
         var spawnDetailsData = isSpawnDetailsClass(cls);
         var hasData = isHasClass(cls);
         var optionData = isOptionClass(cls);
         var refData = isRefClass(cls);
         var mutData = isMutClass(cls);
-        var syntheticData = entityData || spawnDetailsData || hasData || optionData || refData || mutData;
+        var syntheticData = entityData || entityRefData || entityWorldMutData || spawnDetailsData || hasData || optionData || refData || mutData;
         var typeKey = syntheticData ? componentKey : componentLookupKey(cls, componentKey);
         for (index => storage in components) {
             var entity = entityForIndex(index);
@@ -284,7 +286,15 @@ class World {
             }
             result.push({
                 entity: entity,
-                component: entityData ? cast entity : spawnDetailsData ? cast spawnDetails(entity, lastRunTick) : hasData ? cast hasQueryData(storage, typeKey) : optionData ? cast optionQueryData(storage, typeKey) : refData ? cast refQueryData(entity, storage, typeKey, lastRunTick) : mutData ? cast mutQueryData(entity, storage, typeKey, lastRunTick) : cast storage.get(typeKey)
+                component: entityData ? cast entity
+                    : entityRefData ? cast new EntityRef(this, entity)
+                    : entityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : spawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : hasData ? cast hasQueryData(storage, typeKey)
+                    : optionData ? cast optionQueryData(entity, storage, typeKey, lastRunTick)
+                    : refData ? cast refQueryData(entity, storage, typeKey, lastRunTick)
+                    : mutData ? cast mutQueryData(entity, storage, typeKey, lastRunTick)
+                    : cast storage.get(typeKey)
             });
         }
         return result;
@@ -294,6 +304,10 @@ class World {
         var result:Array<QueryItem2<A, B>> = [];
         var aEntityData = isEntityClass(a);
         var bEntityData = isEntityClass(b);
+        var aEntityRefData = isEntityRefClass(a);
+        var bEntityRefData = isEntityRefClass(b);
+        var aEntityWorldMutData = isEntityWorldMutClass(a);
+        var bEntityWorldMutData = isEntityWorldMutClass(b);
         var aSpawnDetailsData = isSpawnDetailsClass(a);
         var bSpawnDetailsData = isSpawnDetailsClass(b);
         var aHasData = isHasClass(a);
@@ -308,8 +322,8 @@ class World {
         var bAnyOfKeys = parseAnyOfQueryDataKey(bKey);
         var aAnyOfData = aAnyOfKeys != null;
         var bAnyOfData = bAnyOfKeys != null;
-        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
-        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
+        var aSyntheticData = aEntityData || aEntityRefData || aEntityWorldMutData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
+        var bSyntheticData = bEntityData || bEntityRefData || bEntityWorldMutData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
         var aRuntimeSyntheticData = aSyntheticData || aAnyOfData;
         var bRuntimeSyntheticData = bSyntheticData || bAnyOfData;
         var resolvedAKey = aSyntheticData ? aKey : componentLookupKey(a, aKey);
@@ -336,8 +350,26 @@ class World {
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick) : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick) : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick) : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick) : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick) : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick) : cast storage.get(resolvedBKey)
+                a: aEntityData ? cast entity
+                    : aEntityRefData ? cast new EntityRef(this, entity)
+                    : aEntityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : aHasData ? cast hasQueryData(storage, resolvedAKey)
+                    : aOptionData ? cast optionQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick)
+                    : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity
+                    : bEntityRefData ? cast new EntityRef(this, entity)
+                    : bEntityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : bHasData ? cast hasQueryData(storage, resolvedBKey)
+                    : bOptionData ? cast optionQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick)
+                    : cast storage.get(resolvedBKey)
             });
         }
         return result;
@@ -348,6 +380,12 @@ class World {
         var aEntityData = isEntityClass(a);
         var bEntityData = isEntityClass(b);
         var cEntityData = isEntityClass(c);
+        var aEntityRefData = isEntityRefClass(a);
+        var bEntityRefData = isEntityRefClass(b);
+        var cEntityRefData = isEntityRefClass(c);
+        var aEntityWorldMutData = isEntityWorldMutClass(a);
+        var bEntityWorldMutData = isEntityWorldMutClass(b);
+        var cEntityWorldMutData = isEntityWorldMutClass(c);
         var aSpawnDetailsData = isSpawnDetailsClass(a);
         var bSpawnDetailsData = isSpawnDetailsClass(b);
         var cSpawnDetailsData = isSpawnDetailsClass(c);
@@ -369,9 +407,9 @@ class World {
         var aAnyOfData = aAnyOfKeys != null;
         var bAnyOfData = bAnyOfKeys != null;
         var cAnyOfData = cAnyOfKeys != null;
-        var aSyntheticData = aEntityData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
-        var bSyntheticData = bEntityData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
-        var cSyntheticData = cEntityData || cSpawnDetailsData || cHasData || cOptionData || cRefData || cMutData;
+        var aSyntheticData = aEntityData || aEntityRefData || aEntityWorldMutData || aSpawnDetailsData || aHasData || aOptionData || aRefData || aMutData;
+        var bSyntheticData = bEntityData || bEntityRefData || bEntityWorldMutData || bSpawnDetailsData || bHasData || bOptionData || bRefData || bMutData;
+        var cSyntheticData = cEntityData || cEntityRefData || cEntityWorldMutData || cSpawnDetailsData || cHasData || cOptionData || cRefData || cMutData;
         var aRuntimeSyntheticData = aSyntheticData || aAnyOfData;
         var bRuntimeSyntheticData = bSyntheticData || bAnyOfData;
         var cRuntimeSyntheticData = cSyntheticData || cAnyOfData;
@@ -409,9 +447,36 @@ class World {
             }
             result.push({
                 entity: entity,
-                a: aEntityData ? cast entity : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : aHasData ? cast hasQueryData(storage, resolvedAKey) : aOptionData ? cast optionQueryData(storage, resolvedAKey) : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick) : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick) : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick) : cast storage.get(resolvedAKey),
-                b: bEntityData ? cast entity : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : bHasData ? cast hasQueryData(storage, resolvedBKey) : bOptionData ? cast optionQueryData(storage, resolvedBKey) : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick) : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick) : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick) : cast storage.get(resolvedBKey),
-                c: cEntityData ? cast entity : cSpawnDetailsData ? cast spawnDetails(entity, lastRunTick) : cHasData ? cast hasQueryData(storage, resolvedCKey) : cOptionData ? cast optionQueryData(storage, resolvedCKey) : cRefData ? cast refQueryData(entity, storage, resolvedCKey, lastRunTick) : cMutData ? cast mutQueryData(entity, storage, resolvedCKey, lastRunTick) : cAnyOfData ? cast anyOfQueryData(cast c, entity, storage, cAnyOfKeys, lastRunTick) : cast storage.get(resolvedCKey)
+                a: aEntityData ? cast entity
+                    : aEntityRefData ? cast new EntityRef(this, entity)
+                    : aEntityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : aSpawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : aHasData ? cast hasQueryData(storage, resolvedAKey)
+                    : aOptionData ? cast optionQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aRefData ? cast refQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aMutData ? cast mutQueryData(entity, storage, resolvedAKey, lastRunTick)
+                    : aAnyOfData ? cast anyOfQueryData(cast a, entity, storage, aAnyOfKeys, lastRunTick)
+                    : cast storage.get(resolvedAKey),
+                b: bEntityData ? cast entity
+                    : bEntityRefData ? cast new EntityRef(this, entity)
+                    : bEntityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : bSpawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : bHasData ? cast hasQueryData(storage, resolvedBKey)
+                    : bOptionData ? cast optionQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bRefData ? cast refQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bMutData ? cast mutQueryData(entity, storage, resolvedBKey, lastRunTick)
+                    : bAnyOfData ? cast anyOfQueryData(cast b, entity, storage, bAnyOfKeys, lastRunTick)
+                    : cast storage.get(resolvedBKey),
+                c: cEntityData ? cast entity
+                    : cEntityRefData ? cast new EntityRef(this, entity)
+                    : cEntityWorldMutData ? cast new EntityWorldMut(this, entity)
+                    : cSpawnDetailsData ? cast spawnDetails(entity, lastRunTick)
+                    : cHasData ? cast hasQueryData(storage, resolvedCKey)
+                    : cOptionData ? cast optionQueryData(entity, storage, resolvedCKey, lastRunTick)
+                    : cRefData ? cast refQueryData(entity, storage, resolvedCKey, lastRunTick)
+                    : cMutData ? cast mutQueryData(entity, storage, resolvedCKey, lastRunTick)
+                    : cAnyOfData ? cast anyOfQueryData(cast c, entity, storage, cAnyOfKeys, lastRunTick)
+                    : cast storage.get(resolvedCKey)
             });
         }
         return result;
@@ -425,6 +490,8 @@ class World {
         }
 
         var syntheticData:Array<Bool> = [];
+        var entityRefData:Array<Bool> = [];
+        var entityWorldMutData:Array<Bool> = [];
         var spawnDetailsData:Array<Bool> = [];
         var hasData:Array<Bool> = [];
         var optionData:Array<Bool> = [];
@@ -436,6 +503,8 @@ class World {
         for (i in 0...items.length) {
             var cls = items[i];
             var isSyntheticData = isSyntheticQueryDataClass(cast cls);
+            var isEntityRefData = isEntityRefClass(cast cls);
+            var isEntityWorldMutData = isEntityWorldMutClass(cast cls);
             var isSpawnDetailsData = isSpawnDetailsClass(cast cls);
             var isHasData = isHasClass(cast cls);
             var isOptionData = isOptionClass(cast cls);
@@ -445,6 +514,8 @@ class World {
             var itemAnyOfKeys = parseAnyOfQueryDataKey(explicitKey);
             var isAnyOfData = itemAnyOfKeys != null;
             syntheticData.push(isSyntheticData);
+            entityRefData.push(isEntityRefData);
+            entityWorldMutData.push(isEntityWorldMutData);
             spawnDetailsData.push(isSpawnDetailsData);
             hasData.push(isHasData);
             optionData.push(isOptionData);
@@ -483,7 +554,16 @@ class World {
                         matched = false;
                         break;
                     }
-                    values.push(spawnDetailsData[i] ? spawnDetails(entity, lastRunTick) : hasData[i] ? hasQueryData(storage, key) : optionData[i] ? optionQueryData(storage, key) : refData[i] ? refQueryData(entity, storage, key, lastRunTick) : mutData[i] ? mutQueryData(entity, storage, key, lastRunTick) : entity);
+                    values.push(
+                        entityRefData[i] ? new EntityRef(this, entity)
+                        : entityWorldMutData[i] ? new EntityWorldMut(this, entity)
+                        : spawnDetailsData[i] ? spawnDetails(entity, lastRunTick)
+                        : hasData[i] ? hasQueryData(storage, key)
+                        : optionData[i] ? optionQueryData(entity, storage, key, lastRunTick)
+                        : refData[i] ? refQueryData(entity, storage, key, lastRunTick)
+                        : mutData[i] ? mutQueryData(entity, storage, key, lastRunTick)
+                        : entity
+                    );
                     continue;
                 }
 
@@ -832,8 +912,62 @@ class World {
         return new Has<Any>(typeKey != null && storage.exists(typeKey));
     }
 
-    private function optionQueryData(storage:Map<String, Dynamic>, typeKey:Null<String>):Option<Any> {
-        return new Option<Any>(typeKey != null && storage.exists(typeKey) ? cast storage.get(typeKey) : null);
+    private function optionQueryData(entity:Entity, storage:Map<String, Dynamic>, typeKey:Null<String>, lastRunTick:Int):Option<Any> {
+        if (typeKey == null) {
+            return new Option<Any>(null);
+        }
+
+        var anyOfKeys = parseAnyOfQueryDataKey(typeKey);
+        if (anyOfKeys != null) {
+            if (!anyOfMatches(storage, anyOfKeys)) {
+                return new Option<Any>(null);
+            }
+            return new Option<Any>(cast anyOfQueryDataByKeys(entity, storage, anyOfKeys, lastRunTick));
+        }
+
+        var keyForDecode = decodeAnyOfBranchKey(typeKey);
+        if (keyForDecode != null) {
+            if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)) {
+                var refKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_REF_PREFIX);
+                if (refKey == "" || !storage.exists(refKey)) {
+                    return new Option<Any>(null);
+                }
+                return new Option<Any>(cast refQueryData(entity, storage, refKey, lastRunTick));
+            }
+            if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX)) {
+                var mutKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX);
+                if (mutKey == "" || !storage.exists(mutKey)) {
+                    return new Option<Any>(null);
+                }
+                return new Option<Any>(cast mutQueryData(entity, storage, mutKey, lastRunTick));
+            }
+            if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX)) {
+                var hasKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_HAS_PREFIX);
+                return new Option<Any>(cast hasQueryData(storage, hasKey));
+            }
+            if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX)) {
+                var optionKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX);
+                return new Option<Any>(cast optionQueryData(entity, storage, optionKey, lastRunTick));
+            }
+            if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY) {
+                return new Option<Any>(cast entity);
+            }
+            if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY_REF) {
+                return new Option<Any>(cast new EntityRef(this, entity));
+            }
+            if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY_WORLD_MUT) {
+                return new Option<Any>(cast new EntityWorldMut(this, entity));
+            }
+            if (keyForDecode == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
+                return new Option<Any>(cast spawnDetails(entity, lastRunTick));
+            }
+            if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX)) {
+                var componentKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX);
+                return new Option<Any>((componentKey != "" && storage.exists(componentKey)) ? cast storage.get(componentKey) : null);
+            }
+        }
+
+        return new Option<Any>(storage.exists(typeKey) ? cast storage.get(typeKey) : null);
     }
 
     private function anyOfMatches(storage:Map<String, Dynamic>, keys:Null<Array<String>>):Bool {
@@ -871,6 +1005,8 @@ class World {
             && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)
             && !StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX)
             && key != QueryDataKey.ANY_OF_ITEM_ENTITY
+            && key != QueryDataKey.ANY_OF_ITEM_ENTITY_REF
+            && key != QueryDataKey.ANY_OF_ITEM_ENTITY_WORLD_MUT
             && key != QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
             key = QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX + key;
         }
@@ -884,6 +1020,10 @@ class World {
     private function anyOfBranchMatches(rawKey:Null<String>, storage:Map<String, Dynamic>):Bool {
         if (rawKey == null || rawKey == "") {
             return false;
+        }
+        var nestedAnyOfKeys = parseAnyOfQueryDataKey(rawKey);
+        if (nestedAnyOfKeys != null) {
+            return anyOfMatches(storage, nestedAnyOfKeys);
         }
         var key = rawKey;
         if (StringTools.startsWith(key, QueryDataKey.ANY_OF_ITEM_COMPONENT_PREFIX)) {
@@ -902,13 +1042,24 @@ class World {
                 : anyOfInnerKey(key, QueryDataKey.ANY_OF_ITEM_MUT_PREFIX);
             return refMutKey != "" && storage.exists(refMutKey);
         }
-        if (key == QueryDataKey.ANY_OF_ITEM_ENTITY || key == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
+        if (key == QueryDataKey.ANY_OF_ITEM_ENTITY
+            || key == QueryDataKey.ANY_OF_ITEM_ENTITY_REF
+            || key == QueryDataKey.ANY_OF_ITEM_ENTITY_WORLD_MUT
+            || key == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
             return true;
         }
         return false;
     }
 
     private function anyOfBranchQueryDataByKey(rawKey:Null<String>, entity:Entity, storage:Map<String, Dynamic>, lastRunTick:Int):{present:Bool, value:Any} {
+        var nestedAnyOfKeys = parseAnyOfQueryDataKey(rawKey);
+        if (nestedAnyOfKeys != null) {
+            return {
+                present: anyOfMatches(storage, nestedAnyOfKeys),
+                value: anyOfQueryDataByKeys(entity, storage, nestedAnyOfKeys, lastRunTick)
+            };
+        }
+
         var keyForDecode = decodeAnyOfBranchKey(rawKey);
         if (keyForDecode == null || keyForDecode == "") {
             return {present: false, value: null};
@@ -927,7 +1078,7 @@ class World {
 
         if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX)) {
             var optionKey = anyOfInnerKey(keyForDecode, QueryDataKey.ANY_OF_ITEM_OPTION_PREFIX);
-            return {present: true, value: optionQueryData(storage, optionKey)};
+            return {present: true, value: optionQueryData(entity, storage, optionKey, lastRunTick)};
         }
 
         if (StringTools.startsWith(keyForDecode, QueryDataKey.ANY_OF_ITEM_REF_PREFIX)) {
@@ -950,12 +1101,33 @@ class World {
             return {present: true, value: entity};
         }
 
+        if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY_REF) {
+            return {present: true, value: new EntityRef(this, entity)};
+        }
+
+        if (keyForDecode == QueryDataKey.ANY_OF_ITEM_ENTITY_WORLD_MUT) {
+            return {present: true, value: new EntityWorldMut(this, entity)};
+        }
+
         if (keyForDecode == QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS) {
             var details = spawnDetails(entity, lastRunTick);
             return {present: details != null, value: details};
         }
 
         return {present: false, value: null};
+    }
+
+    private function anyOfQueryDataByKeys(entity:Entity, storage:Map<String, Dynamic>, keys:Null<Array<String>>, lastRunTick:Int):Any {
+        var values:Array<Any> = [];
+        if (keys != null) {
+            for (key in keys) {
+                var branch = anyOfBranchQueryDataByKey(key, entity, storage, lastRunTick);
+                values.push(new Option<Any>(branch.present ? cast branch.value : null));
+            }
+        }
+        var arity = keys != null ? keys.length : 0;
+        var nestedClass:Class<Any> = cast Type.resolveClass('bevy.ecs.AnyOf_' + arity);
+        return nestedClass != null ? Type.createInstance(nestedClass, values) : values;
     }
 
     private function anyOfBranchQueryData(
@@ -982,6 +1154,10 @@ class World {
         }
         if (clsName == "bevy.ecs.Entity") {
             return QueryDataKey.ANY_OF_ITEM_ENTITY;
+        }
+        if (clsName == "bevy.ecs.Entity.EntityRef" || clsName == "bevy.ecs.EntityRef"
+            || clsName == "bevy.ecs.Entity.EntityWorldMut" || clsName == "bevy.ecs.EntityWorldMut") {
+            return null;
         }
         if (clsName == "bevy.ecs.SpawnDetails") {
             return QueryDataKey.ANY_OF_ITEM_SPAWN_DETAILS;
@@ -1062,7 +1238,7 @@ class World {
     }
 
     private function queryDataLookupKey<T>(cls:Class<T>, typeKey:Null<String>):Null<String> {
-        if (isEntityClass(cls) || isSpawnDetailsClass(cls)) {
+        if (isEntityClass(cls) || isEntityRefClass(cls) || isEntityWorldMutClass(cls) || isSpawnDetailsClass(cls)) {
             return typeKey == null || typeKey == "" ? null : componentLookupKey(cls, typeKey);
         }
         if (isHasClass(cls)) {
@@ -1082,6 +1258,14 @@ class World {
         return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
     }
 
+    private function isEntityRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityRef);
+    }
+
+    private function isEntityWorldMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityWorldMut);
+    }
+
     private function isHasClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Has);
     }
@@ -1099,7 +1283,7 @@ class World {
     }
 
     private function isSyntheticQueryDataClass<T>(cls:Class<T>):Bool {
-        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
+        return isEntityClass(cls) || isEntityRefClass(cls) || isEntityWorldMutClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
     }
 
     private function componentStorageKey(component:Dynamic):String {

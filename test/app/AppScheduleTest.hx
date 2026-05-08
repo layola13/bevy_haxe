@@ -22,6 +22,8 @@ import bevy.ecs.Component;
 import bevy.ecs.Event;
 import bevy.ecs.Events.EventReader;
 import bevy.ecs.Events.EventWriter;
+import bevy.ecs.Entity.EntityRef;
+import bevy.ecs.Entity.EntityWorldMut;
 import bevy.ecs.Or;
 import bevy.ecs.Query;
 import bevy.ecs.Query.Query2;
@@ -161,6 +163,8 @@ class AppScheduleTest {
         assertEq(3, app.world.getResource(QueryTotal).value, "Query2 param should read components");
         assertEq(1, app.world.getResource(QueryPairFilterCount).value, "Query2<DataA, DataB, Filter> param should respect filter type");
         assertEq(1, app.world.getResource(QueryEntityPairCount).value, "Query2<Entity, Data> param should inject mixed entity/component queries");
+        assertEq(11, app.world.getResource(QueryEntityRefScore).value, "Query<EntityRef, Filter> should inject entity reference query data");
+        assertEq(11, app.world.getResource(QueryEntityWorldMutScore).value, "Query<EntityWorldMut, Filter> should inject mutable entity query data");
         assertEq(3, app.world.getResource(QueryTuplePairTotal).value, "Query<Tuple2<DataA, DataB>> should inject tuple query data");
         assertEq(3, app.world.getResource(QueryTupleUniquePairTotal).value, "Query<Tuple2<DataA, DataB>> should support getManyUnique through system injection");
         assertEq(1, app.world.getResource(QueryTupleCombinationPairCount).value, "Query<Tuple2<DataA, DataB>> should support iterCombinations through system injection");
@@ -176,9 +180,16 @@ class AppScheduleTest {
         assertEq(1203, app.world.getResource(QueryTupleHandleHasScore).value, "Query<Tuple<Handle<A>, Has<Handle<B>>>> should preserve parameterized Has<T> keys");
         assertEq(2, app.world.getResource(QueryOptionAppTagCount).value, "Query<Option<T>, Filter> should match all filtered entities");
         assertEq(1, app.world.getResource(QueryOptionAppTagSomeCount).value, "Query<Option<T>, Filter> should report actual component presence");
+        assertEq(2, app.world.getResource(QueryOptionEntityScore).value, "Query<Option<Entity>, Filter> should materialize Option-wrapped Entity query data");
+        assertEq(2, app.world.getResource(QueryOptionSpawnDetailsScore).value, "Query<Option<SpawnDetails>, Filter> should materialize Option-wrapped SpawnDetails query data");
+        assertEq(110, app.world.getResource(QueryOptionOptionAppTagScore).value, "Query<Option<Option<T>>, Filter> should materialize nested Option query data");
         assertEq(1, app.world.getResource(QueryPairOptionAppTagSomeCount).value, "Query2<Component, Option<T>> should inject Option<T> query data");
         assertEq(16, app.world.getResource(QueryTupleOptionAppTagScore).value, "Query<Tuple<Component, Option<T>>> should inject Option<T> through tuple query data");
         assertEq(404, app.world.getResource(QueryTupleHandleOptionScore).value, "Query<Tuple<Handle<A>, Option<Handle<B>>>> should preserve parameterized Option<T> keys");
+        assertEq(101, app.world.getResource(QueryOptionHasAppTagScore).value, "Query<Option<Has<T>>, Filter> should materialize Option-wrapped Has query data");
+        assertEq(11, app.world.getResource(QueryOptionEntityRefScore).value, "Query<Option<EntityRef>, Filter> should materialize Option-wrapped EntityRef query data");
+        assertEq(11, app.world.getResource(QueryOptionEntityWorldMutScore).value, "Query<Option<EntityWorldMut>, Filter> should materialize Option-wrapped EntityWorldMut query data");
+        assertEq(64, app.world.getResource(QueryOptionAnyOfScore).value, "Query<Option<AnyOf<A, B>>, Filter> should materialize Option-wrapped AnyOf branches");
         assertEq(1, app.world.getResource(QueryTupleRefPositionSum).value, "Query<Tuple<Ref<T>, ...>> should inject Ref<T> tuple query data");
         assertEq(1, app.world.getResource(QueryTupleRefPositionChangedCount).value, "Query<Tuple<Ref<T>, ...>> should preserve Ref<T> change metadata in tuple data");
         assertEq(2, app.world.getResource(QueryTupleMutVelocitySum).value, "Query<Tuple<Mut<T>, ...>> should inject Mut<T> tuple query data");
@@ -200,6 +211,8 @@ class AppScheduleTest {
         assertEq(332, app.world.getResource(QueryTripleAnyOfHandleScore).value, "Query3<AnyOf<Handle<A>, Handle<B>>, Position, Tag> should preserve parameterized AnyOf keys");
         assertEq(332, app.world.getResource(QueryTupleAnyOfHandleScore).value, "Query<Tuple<AnyOf<Handle<A>, Handle<B>>, Position>> should preserve parameterized AnyOf keys");
         assertEq(345, app.world.getResource(QueryPairAnyOfEntityMutScore).value, "Query2<AnyOf<Entity, Mut<T>>, Position> should materialize synthetic Entity + Mut branches");
+        assertEq(85, app.world.getResource(QueryAnyOfEntityRefMutScore).value, "Query<AnyOf<EntityRef, Mut<T>>, Filter> should materialize synthetic EntityRef + Mut branches");
+        assertEq(127, app.world.getResource(QueryAnyOfNestedScore).value, "Query<AnyOf<AnyOf<A, B>, C>, Filter> should materialize nested AnyOf branches");
         assertEq(470, app.world.getResource(QueryTripleAnyOfHasOptionScore).value, "Query3<AnyOf<Has<T>, Option<T>>, Position, Tag> should keep Has/Option branches always materialized");
         assertEq(506, app.world.getResource(QueryTupleAnyOfRefMutScore).value, "Query<Tuple<AnyOf<Ref<T>, Mut<U>>, Position>> should materialize Ref/Mut nested branches");
         assertEq(2, app.world.getResource(QueryTupleAnyOfRefMutChangedAfterMark).value, "AnyOf nested Mut<T> branch should persist setChanged metadata");
@@ -546,6 +559,20 @@ class QueryEntityPairCount implements Resource {
     }
 }
 
+class QueryEntityRefScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryEntityWorldMutScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class QueryTuplePairTotal implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -651,6 +678,27 @@ class QueryOptionAppTagSomeCount implements Resource {
     }
 }
 
+class QueryOptionEntityScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionSpawnDetailsScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionOptionAppTagScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
 class QueryPairOptionAppTagSomeCount implements Resource {
     public var value:Int;
     public function new(value:Int) {
@@ -666,6 +714,34 @@ class QueryTupleOptionAppTagScore implements Resource {
 }
 
 class QueryTupleHandleOptionScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionHasAppTagScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionEntityRefScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionEntityWorldMutScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryOptionAnyOfScore implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -813,6 +889,20 @@ class QueryTupleAnyOfHandleScore implements Resource {
 }
 
 class QueryPairAnyOfEntityMutScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryAnyOfEntityRefMutScore implements Resource {
+    public var value:Int;
+    public function new(value:Int) {
+        this.value = value;
+    }
+}
+
+class QueryAnyOfNestedScore implements Resource {
     public var value:Int;
     public function new(value:Int) {
         this.value = value;
@@ -1599,6 +1689,32 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function entityRefQuerySystem(query:Query<EntityRef, With<AppTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            var position = item.component.get(AppPosition);
+            if (position != null) {
+                score += position.value;
+            }
+        }
+        commands.insertResource(new QueryEntityRefScore(score));
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function entityWorldMutQuerySystem(query:Query<EntityWorldMut, With<AppTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            var position = item.component.get(AppPosition);
+            if (position != null) {
+                score += position.value;
+            }
+        }
+        commands.insertResource(new QueryEntityWorldMutScore(score));
+    }
+
+    @:system("Update")
     public static function tuplePairQuerySystem(query:Query<Tuple2<AppPosition, AppVelocity>>, commands:Commands):Void {
         var total = 0;
         for (item in query.toArray()) {
@@ -1722,6 +1838,46 @@ class CounterSystems implements SystemClass implements AsyncClass {
     }
 
     @:system("Update")
+    public static function optionEntityQuerySystem(query:Query<Option<bevy.ecs.Entity>, With<AppPosition>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component.isSome() && item.component.value.index == item.entity.index) {
+                score += 1;
+            }
+        }
+        commands.insertResource(new QueryOptionEntityScore(score));
+    }
+
+    @:system("Update")
+    public static function optionSpawnDetailsQuerySystem(query:Query<Option<SpawnDetails>, With<AppPosition>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component.isSome() && item.component.value.spawnTick() > 0) {
+                score += 1;
+            }
+        }
+        commands.insertResource(new QueryOptionSpawnDetailsScore(score));
+    }
+
+    @:system("Update")
+    public static function optionOptionAppTagQuerySystem(query:Query<Option<Option<AppTag>>, With<AppPosition>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (!item.component.isSome()) {
+                score += 1;
+                continue;
+            }
+            var inner = item.component.value;
+            if (inner.isSome()) {
+                score += 100;
+            } else {
+                score += 10;
+            }
+        }
+        commands.insertResource(new QueryOptionOptionAppTagScore(score));
+    }
+
+    @:system("Update")
     public static function pairOptionAppTagQuerySystem(query:Query2<AppPosition, Option<AppTag>>, commands:Commands):Void {
         var some = 0;
         for (item in query.toArray()) {
@@ -1754,6 +1910,70 @@ class CounterSystems implements SystemClass implements AsyncClass {
             }
         }
         commands.insertResource(new QueryTupleHandleOptionScore(score));
+    }
+
+    @:system("Update")
+    public static function optionHasAppTagQuerySystem(query:Query<Option<Has<AppTag>>, With<AppPosition>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component.isSome() && item.component.value.value) {
+                score += 100;
+            } else {
+                score += 1;
+            }
+        }
+        commands.insertResource(new QueryOptionHasAppTagScore(score));
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function optionEntityRefQuerySystem(query:Query<Option<EntityRef>, With<AppTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (!item.component.isSome()) {
+                continue;
+            }
+            var position = item.component.value.get(AppPosition);
+            if (position != null) {
+                score += position.value;
+            }
+        }
+        commands.insertResource(new QueryOptionEntityRefScore(score));
+    }
+
+    @:system("Update")
+    @:after("app.CounterSystems.mutateTrackedPosition")
+    public static function optionEntityWorldMutQuerySystem(query:Query<Option<EntityWorldMut>, With<AppTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (!item.component.isSome()) {
+                continue;
+            }
+            var position = item.component.value.get(AppPosition);
+            if (position != null) {
+                score += position.value;
+            }
+        }
+        commands.insertResource(new QueryOptionEntityWorldMutScore(score));
+    }
+
+    @:system("Update")
+    public static function optionAnyOfQuerySystem(query:Query<Option<AnyOf<AppAnyOfA, AppAnyOfB>>, With<AppAnyOfTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (!item.component.isSome()) {
+                score -= 1;
+                continue;
+            }
+            var any = item.component.value;
+            if (any._0.isSome()) {
+                score += any._0.value.value;
+            }
+            if (any._1.isSome()) {
+                score += any._1.value.value;
+            }
+        }
+        commands.insertResource(new QueryOptionAnyOfScore(score));
     }
 
     @:system("Update")
@@ -2000,6 +2220,41 @@ class CounterSystems implements SystemClass implements AsyncClass {
             }
         }
         commands.insertResource(new QueryPairAnyOfEntityMutScore(score));
+    }
+
+    @:system("Update")
+    public static function anyOfEntityRefMutQuerySystem(query:Query<AnyOf<EntityRef, Mut<AppAnyOfA>>, With<AppAnyOfSyntheticTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component._0.isSome()) {
+                score += item.component._0.value.id().index;
+            }
+            if (item.component._1.isSome()) {
+                score += item.component._1.value.value.value;
+                item.component._1.value.setChanged();
+            }
+        }
+        commands.insertResource(new QueryAnyOfEntityRefMutScore(score));
+    }
+
+    @:system("Update")
+    public static function anyOfNestedQuerySystem(query:Query<AnyOf<AnyOf<AppAnyOfA, AppAnyOfB>, AppAnyOfPosition>, With<AppAnyOfTag>>, commands:Commands):Void {
+        var score = 0;
+        for (item in query.toArray()) {
+            if (item.component._0.isSome()) {
+                var inner = item.component._0.value;
+                if (inner._0.isSome()) {
+                    score += inner._0.value.value;
+                }
+                if (inner._1.isSome()) {
+                    score += inner._1.value.value;
+                }
+            }
+            if (item.component._1.isSome()) {
+                score += item.component._1.value.value;
+            }
+        }
+        commands.insertResource(new QueryAnyOfNestedScore(score));
     }
 
     @:system("Update")

@@ -5,6 +5,8 @@ import bevy.ecs.EcsError.QueryEntityNotSpawnedError;
 import bevy.ecs.EcsError.EntityDoesNotExistError;
 import bevy.ecs.EcsError.QuerySingleMultipleEntitiesError;
 import bevy.ecs.EcsError.QuerySingleNoEntitiesError;
+import bevy.ecs.Entity.EntityRef;
+import bevy.ecs.Entity.EntityWorldMut;
 import bevy.ecs.Added;
 import bevy.ecs.Changed;
 import bevy.ecs.With;
@@ -183,6 +185,14 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
     }
 
+    private inline function isEntityRefClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityRef);
+    }
+
+    private inline function isEntityWorldMutClass<C>(cls:Class<C>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityWorldMut);
+    }
+
     private inline function isSpawnDetailsClass<C>(cls:Class<C>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(SpawnDetails);
     }
@@ -204,7 +214,7 @@ class Query<T, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
     }
 
     private inline function isSyntheticQueryDataClass<C>(cls:Class<C>):Bool {
-        return isEntityClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
+        return isEntityClass(cls) || isEntityRefClass(cls) || isEntityWorldMutClass(cls) || isSpawnDetailsClass(cls) || isHasClass(cls) || isOptionClass(cls) || isRefClass(cls) || isMutClass(cls);
     }
 }
 
@@ -286,6 +296,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
 
         var aEntityData = isEntityClass(aClass);
         var bEntityData = isEntityClass(bClass);
+        var aEntityRefData = isEntityRefClass(aClass);
+        var bEntityRefData = isEntityRefClass(bClass);
+        var aEntityWorldMutData = isEntityWorldMutClass(aClass);
+        var bEntityWorldMutData = isEntityWorldMutClass(bClass);
         var aSpawnDetailsData = isSpawnDetailsClass(aClass);
         var bSpawnDetailsData = isSpawnDetailsClass(bClass);
         var aHasData = isHasClass(aClass);
@@ -298,10 +312,10 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var bMutData = isMutClass(bClass);
         var aAnyOfData = isAnyOfKey(aKey);
         var bAnyOfData = isAnyOfKey(bKey);
-        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
+        if (!aEntityData && !aEntityRefData && !aEntityWorldMutData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
             return null;
         }
-        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
+        if (!bEntityData && !bEntityRefData && !bEntityWorldMutData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
             return null;
         }
         if ((aRefData || aMutData) && !world.hasByKey(entity, aKey)) {
@@ -393,6 +407,14 @@ class Query2<A, B, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
 
     private inline function isEntityClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
+    }
+
+    private inline function isEntityRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityRef);
+    }
+
+    private inline function isEntityWorldMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityWorldMut);
     }
 
     private inline function isSpawnDetailsClass<T>(cls:Class<T>):Bool {
@@ -503,6 +525,12 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var aEntityData = isEntityClass(aClass);
         var bEntityData = isEntityClass(bClass);
         var cEntityData = isEntityClass(cClass);
+        var aEntityRefData = isEntityRefClass(aClass);
+        var bEntityRefData = isEntityRefClass(bClass);
+        var cEntityRefData = isEntityRefClass(cClass);
+        var aEntityWorldMutData = isEntityWorldMutClass(aClass);
+        var bEntityWorldMutData = isEntityWorldMutClass(bClass);
+        var cEntityWorldMutData = isEntityWorldMutClass(cClass);
         var aSpawnDetailsData = isSpawnDetailsClass(aClass);
         var bSpawnDetailsData = isSpawnDetailsClass(bClass);
         var cSpawnDetailsData = isSpawnDetailsClass(cClass);
@@ -521,13 +549,13 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
         var aAnyOfData = isAnyOfKey(aKey);
         var bAnyOfData = isAnyOfKey(bKey);
         var cAnyOfData = isAnyOfKey(cKey);
-        if (!aEntityData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
+        if (!aEntityData && !aEntityRefData && !aEntityWorldMutData && !aSpawnDetailsData && !aHasData && !aOptionData && !aRefData && !aMutData && !aAnyOfData && world.get(entity, aClass, aKey) == null) {
             return null;
         }
-        if (!bEntityData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
+        if (!bEntityData && !bEntityRefData && !bEntityWorldMutData && !bSpawnDetailsData && !bHasData && !bOptionData && !bRefData && !bMutData && !bAnyOfData && world.get(entity, bClass, bKey) == null) {
             return null;
         }
-        if (!cEntityData && !cSpawnDetailsData && !cHasData && !cOptionData && !cRefData && !cMutData && !cAnyOfData && world.get(entity, cClass, cKey) == null) {
+        if (!cEntityData && !cEntityRefData && !cEntityWorldMutData && !cSpawnDetailsData && !cHasData && !cOptionData && !cRefData && !cMutData && !cAnyOfData && world.get(entity, cClass, cKey) == null) {
             return null;
         }
         if ((aRefData || aMutData) && !world.hasByKey(entity, aKey)) {
@@ -625,6 +653,14 @@ class Query3<A, B, C, F:bevy.ecs.QueryFilter = bevy.ecs.QueryFilter> {
 
     private inline function isEntityClass<T>(cls:Class<T>):Bool {
         return Type.getClassName(cast cls) == Type.getClassName(Entity);
+    }
+
+    private inline function isEntityRefClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityRef);
+    }
+
+    private inline function isEntityWorldMutClass<T>(cls:Class<T>):Bool {
+        return Type.getClassName(cast cls) == Type.getClassName(EntityWorldMut);
     }
 
     private inline function isSpawnDetailsClass<T>(cls:Class<T>):Bool {
