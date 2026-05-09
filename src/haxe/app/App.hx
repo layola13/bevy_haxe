@@ -1,6 +1,9 @@
 package haxe.app;
 
 import haxe.ds.Map;
+import haxe.app.AppError;
+import haxe.app.AppError.AppErrorKind;
+import haxe.app.Plugins;
 
 /**
     System function type.
@@ -83,7 +86,7 @@ class App {
     **/
     function addPluginInternal<T:Plugin>(plugin:T):Void {
         if (plugin.isUnique && plugins.exists(plugin.name)) {
-            throw 'Duplicate plugin: ${plugin.name}';
+            throw new AppError(AppErrorKind.PluginAlreadyAdded(plugin.name));
         }
         plugins.set(plugin.name, plugin);
         pluginOrder.push(plugin.name);
@@ -103,7 +106,11 @@ class App {
         Returns `this` for chainable API.
     **/
     public function addPluginGroup<T:PluginGroup>(group:T):App {
-        group.build().addToApp(this);
+        return group.build().finish(this);
+    }
+
+    public function addPlugins(values:Plugins):App {
+        values.addToApp(this);
         return this;
     }
 

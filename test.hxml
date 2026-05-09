@@ -42,6 +42,12 @@
 --next
 -cp src
 -cp test
+-main app.HaxeAppPluginGroupTest
+--interp
+
+--next
+-cp src
+-cp test
 -main asset_new.AssetPipelineTest
 --interp
 

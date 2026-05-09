@@ -1,107 +1,256 @@
 package haxe.app;
 
-import haxe.ds.Map;
+import haxe.app.AppError;
+import haxe.app.AppError.AppErrorKind;
 
-/**
-    Builder for constructing a plugin group.
+private typedef PluginGroupEntry = {
+    var typeKey:String;
+    var plugin:Plugin;
+    var enabled:Bool;
+}
 
-    Allows adding multiple plugins with optional configuration
-    before adding the group to an App.
-**/
-class PluginGroupBuilder {
-    var plugins:Array<{plugin:Plugin, settings:Dynamic}>;
-    var order:Array<String>;
+class PluginGroupBuilder implements PluginGroup {
+    private var groupName:String;
+    private var plugins:Array<PluginGroupEntry>;
 
-    /**
-        Creates a new PluginGroupBuilder starting with the given group type.
-    **/
     public function new(groupName:String) {
-        plugins = [];
-        order = [];
+        this.groupName = groupName;
+        this.plugins = [];
     }
 
-    /**
-        Adds a plugin to this group.
-    **/
-    public function add<T:Plugin>(plugin:T):PluginGroupBuilder {
-        plugins.push({plugin: plugin, settings: null});
-        order.push(plugin.name);
-        return this;
+    public static function start<T:PluginGroup>(cls:Class<T>):PluginGroupBuilder {
+        return new PluginGroupBuilder(resolveGroupName(cls));
     }
 
-    /**
-        Adds a plugin with configuration settings.
-    **/
-    public function addWithSettings<T:Plugin>(plugin:T, settings:Dynamic):PluginGroupBuilder {
-        plugins.push({plugin: plugin, settings: settings});
-        order.push(plugin.name);
-        return this;
+    public static function resolveGroupName<T:PluginGroup>(cls:Class<T>):String {
+        var name = Type.getClassName(cls);
+        return name != null ? name : "PluginGroup";
     }
 
-    /**
-        Adds all plugins from another group.
-    **/
-    public function addGroup<T:PluginGroup>(group:T):PluginGroupBuilder {
-        var builder = group.build();
-        for (p in builder.plugins) {
-            plugins.push(p);
-            order.push(p.plugin.name);
+    public function contains<T:Plugin>(cls:Class<T>):Bool {
+        return indexOf(cls) >= 0;
+    }
+
+    public function enabled<T:Plugin>(cls:Class<T>):Bool {
+        var index = indexOf(cls);
+        return index >= 0 && plugins[index].enabled;
+    }
+
+    public function set<T:Plugin>(plugin:T):PluginGroupBuilder {
+        if (!trySet(plugin)) {
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForPlugin(plugin)));
         }
         return this;
     }
 
-    /**
-        Sets the order of plugins in this group.
-    **/
-    public function setOrder(order:Array<String>):PluginGroupBuilder {
-        this.order = order;
+    public function trySet<T:Plugin>(plugin:T):Bool {
+        var index = indexOfTypeKey(typeKeyForPlugin(plugin));
+        if (index < 0) {
+            return false;
+        }
+        plugins[index] = {
+            typeKey: plugins[index].typeKey,
+            plugin: plugin,
+            enabled: plugins[index].enabled
+        };
+        return true;
+    }
+
+    public function add<T:Plugin>(plugin:T):PluginGroupBuilder {
+        upsert(plugin, plugins.length);
         return this;
     }
 
-    /**
-        Builds and returns the plugin group.
-    **/
-    public function build():BuiltPluginGroup {
-        return new BuiltPluginGroup(plugins, order);
-    }
-}
-
-/**
-    Internal class representing a built plugin group.
-**/
-class BuiltPluginGroup {
-    var plugins:Array<{plugin:Plugin, settings:Dynamic}>;
-    var order:Array<String>;
-
-    public function new(plugins:Array<{plugin:Plugin, settings:Dynamic}>, order:Array<String>) {
-        this.plugins = plugins;
-        this.order = order;
+    public function tryAdd<T:Plugin>(plugin:T):Bool {
+        if (indexOfTypeKey(typeKeyForPlugin(plugin)) >= 0) {
+            return false;
+        }
+        add(plugin);
+        return true;
     }
 
-    /**
-        Adds all plugins in this group to the App.
-    **/
-    public function addToApp(app:App):Void {
-        for (name in order) {
-            for (p in plugins) {
-                if (p.plugin.name == name) {
-                    app.addPluginDirectly(p.plugin);
-                    break;
+    public function addGroup(group:PluginGroup):PluginGroupBuilder {
+        var nested = group.build();
+        for (entry in nested.plugins) {
+            upsertEntry({
+                typeKey: entry.typeKey,
+                plugin: entry.plugin,
+                enabled: entry.enabled
+            }, plugins.length);
+        }
+        return this;
+    }
+
+    public function addBefore<Target:Plugin>(target:Class<Target>, plugin:Plugin):PluginGroupBuilder {
+        var index = indexOf(target);
+        if (index < 0) {
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(target)));
+        }
+        upsert(plugin, index);
+        return this;
+    }
+
+    public function tryAddBefore<Target:Plugin, Insert:Plugin>(target:Class<Target>, plugin:Insert):Bool {
+        if (indexOfTypeKey(typeKeyForPlugin(plugin)) >= 0) {
+            return false;
+        }
+        var index = indexOf(target);
+        if (index < 0) {
+            return false;
+        }
+        upsert(plugin, index);
+        return true;
+    }
+
+    public function tryAddBeforeOverwrite<Target:Plugin, Insert:Plugin>(target:Class<Target>, plugin:Insert):Bool {
+        var index = indexOf(target);
+        if (index < 0) {
+            return false;
+        }
+        upsert(plugin, index);
+        return true;
+    }
+
+    public function addAfter<Target:Plugin>(target:Class<Target>, plugin:Plugin):PluginGroupBuilder {
+        var index = indexOf(target);
+        if (index < 0) {
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(target)));
+        }
+        upsert(plugin, index + 1);
+        return this;
+    }
+
+    public function tryAddAfter<Target:Plugin, Insert:Plugin>(target:Class<Target>, plugin:Insert):Bool {
+        if (indexOfTypeKey(typeKeyForPlugin(plugin)) >= 0) {
+            return false;
+        }
+        var index = indexOf(target);
+        if (index < 0) {
+            return false;
+        }
+        upsert(plugin, index + 1);
+        return true;
+    }
+
+    public function tryAddAfterOverwrite<Target:Plugin, Insert:Plugin>(target:Class<Target>, plugin:Insert):Bool {
+        var index = indexOf(target);
+        if (index < 0) {
+            return false;
+        }
+        upsert(plugin, index + 1);
+        return true;
+    }
+
+    public function disable<T:Plugin>(cls:Class<T>):PluginGroupBuilder {
+        var index = indexOf(cls);
+        if (index < 0) {
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(cls)));
+        }
+        plugins[index].enabled = false;
+        return this;
+    }
+
+    public function enable<T:Plugin>(cls:Class<T>):PluginGroupBuilder {
+        var index = indexOf(cls);
+        if (index < 0) {
+            throw new AppError(AppErrorKind.PluginGroupPluginMissing(groupName, typeKeyForClass(cls)));
+        }
+        plugins[index].enabled = true;
+        return this;
+    }
+
+    public function finish(app:App):App {
+        for (entry in plugins) {
+            if (entry.enabled) {
+                try {
+                    app.addPlugin(entry.plugin);
+                } catch (error:Dynamic) {
+                    throw new AppError(AppErrorKind.PluginGroupAddFailed(groupName, entry.plugin.name, error));
                 }
             }
         }
+        return app;
+    }
+
+    public function build():PluginGroupBuilder {
+        return this;
+    }
+
+    private function upsert(plugin:Plugin, targetIndex:Int):Void {
+        upsertEntry({
+            typeKey: typeKeyForPlugin(plugin),
+            plugin: plugin,
+            enabled: true
+        }, targetIndex);
+    }
+
+    private function upsertEntry(entry:PluginGroupEntry, targetIndex:Int):Void {
+        var existing = indexOfTypeKey(entry.typeKey);
+        if (existing >= 0) {
+            plugins.splice(existing, 1);
+            if (existing < targetIndex) {
+                targetIndex--;
+            }
+        }
+        plugins.insert(targetIndex, entry);
+    }
+
+    private function indexOf<T:Plugin>(cls:Class<T>):Int {
+        return indexOfTypeKey(typeKeyForClass(cls));
+    }
+
+    private function indexOfTypeKey(typeKey:String):Int {
+        for (i in 0...plugins.length) {
+            if (plugins[i].typeKey == typeKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static function typeKeyForPlugin(plugin:Plugin):String {
+        var cls = Type.getClass(plugin);
+        if (cls == null) {
+            throw new AppError(AppErrorKind.PluginWithoutRuntimeClass(Std.string(plugin)));
+        }
+        return typeKeyForClass(cast cls);
+    }
+
+    private static function typeKeyForClass<T>(cls:Class<T>):String {
+        var name = Type.getClassName(cls);
+        if (name == null) {
+            throw new AppError(AppErrorKind.PluginClassNameUnavailable);
+        }
+        return name;
     }
 }
 
-/**
-    Interface for a group of plugins.
-
-    Implement this interface to create a collection of related plugins
-    that can be added to an App with a single call.
-**/
 interface PluginGroup {
-    /**
-        Builds the plugin group and returns a builder.
-    **/
     function build():PluginGroupBuilder;
+}
+
+class NoopPluginGroup implements PluginGroup {
+    public function new() {}
+
+    public function build():PluginGroupBuilder {
+        return PluginGroupBuilder.start(NoopPluginGroup);
+    }
+}
+
+class PluginGroupBuilderGroup implements PluginGroup {
+    private var builder:PluginGroupBuilder;
+
+    public function new(builder:PluginGroupBuilder) {
+        this.builder = builder;
+    }
+
+    public function build():PluginGroupBuilder {
+        return builder;
+    }
+}
+
+class PluginGroupTools {
+    public static function name<T:PluginGroup>(cls:Class<T>):String {
+        return PluginGroupBuilder.resolveGroupName(cls);
+    }
 }
